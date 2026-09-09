@@ -8,6 +8,8 @@ export default function SkylineSwingerMobile() {
   const webBtnRef = useRef(null);
   const jumpBtnRef = useRef(null);
   const fightBtnRef = useRef(null);
+  const speedFxRef = useRef(null);
+  const audioCtxRef = useRef(null);
   const [started, setStarted] = useState(false);
   const [score, setScore] = useState(0);
   const [defeated, setDefeated] = useState(0);
@@ -15,7 +17,18 @@ export default function SkylineSwingerMobile() {
   const [message, setMessage] = useState('');
   const [hitFlash, setHitFlash] = useState(false);
 
-  const startGame = useCallback(() => setStarted(true), []);
+  const startGame = useCallback(() => {
+    // Create/resume the AudioContext synchronously inside this click handler —
+    // iOS Safari only allows audio playback to start within a real user gesture.
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        if (!audioCtxRef.current) audioCtxRef.current = new AC();
+        if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+      }
+    } catch (e) { /* audio unsupported — game still works silently */ }
+    setStarted(true);
+  }, []);
 
   useEffect(() => {
     if (!started || !mountRef.current) return;
@@ -23,6 +36,7 @@ export default function SkylineSwingerMobile() {
     const mount = mountRef.current;
     let animationId;
     const clock = new THREE.Clock();
+    const audioCtx = audioCtxRef.current;
 
     // ---------- Scene ----------
     const scene = new THREE.Scene();
@@ -70,6 +84,24 @@ export default function SkylineSwingerMobile() {
     sunGlow.scale.set(140, 140, 1);
     sunGlow.position.set(200, 160, -300);
     scene.add(sunGlow);
+
+    // Drifting clouds for a more alive, realistic sky
+    function makeCloudTexture() {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 64;
+      const ctx = c.getContext('2d');
+      for (let i = 0; i < 6; i++) {
+        const cx = 20 + Math.random() * 88, cy = 20 + Math.random() * 24, r = 14 + Math.random() * 16;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        g.addColorStop(0, 'rgba(255,255,255,0.9)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      }
+      return c;
+    }
+    const cloudMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(makeCloudTexture()), transparent: true, opacity: 0.8, depthWrite: false, fog: false });
+    const clouds = [];
 
     const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x445566, 0.85);
     scene.add(hemi);
@@ -174,6 +206,104 @@ export default function SkylineSwingerMobile() {
       }
     }
 
+    // Populate clouds now that CITY_SIZE is known
+    for (let i = 0; i < 14; i++) {
+      const s = new THREE.Sprite(cloudMat);
+      const scale = 40 + Math.random() * 50;
+      s.scale.set(scale, scale * 0.5, 1);
+      s.position.set((Math.random() - 0.5) * CITY_SIZE * 3, 130 + Math.random() * 70, (Math.random() - 0.5) * CITY_SIZE * 3);
+      s.userData.speed = 1.5 + Math.random() * 2;
+      scene.add(s);
+      clouds.push(s);
+    }
+    function updateClouds(dt) {
+      const bound = CITY_SIZE * 3;
+      for (const c of clouds) {
+        c.position.x += c.userData.speed * dt;
+        if (c.position.x > bound) c.position.x = -bound;
+      }
+    }
+
+    // Decorative traffic — pure visual life for the streets, no gameplay collision
+    function makeCar(color) {
+      const grp = new THREE.Group();
+      const bodyMatC = new THREE.MeshStandardMaterial({ color, metalness: 0.4, roughness: 0.4 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.7, 4.2), bodyMatC);
+      body.position.y = 0.55;
+      body.castShadow = true;
+      grp.add(body);
+      const cabin = new THREE.Mesh(
+        new THREE.BoxGeometry(1.8, 0.5, 2.0),
+        new THREE.MeshStandardMaterial({ color: 0x1a2230, metalness: 0.3, roughness: 0.5 })
+      );
+      cabin.position.set(0, 1.05, -0.2);
+      grp.add(cabin);
+      return grp;
+    }
+    const cars = [];
+    const carColors = [0xd23c3c, 0x3c6fd2, 0xd2c23c, 0xe8e8e8, 0x3c3c3c];
+    for (let i = 0; i < 6; i++) {
+      const alongX = i % 2 === 0;
+      const lanePos = (Math.floor(i / 2) - 1) * 66;
+      const car = makeCar(carColors[i % carColors.length]);
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      car.userData = { alongX, speed: 9 + Math.random() * 6, dir };
+      if (alongX) {
+        car.position.set(-CITY_SIZE + Math.random() * CITY_SIZE * 2, 0.02, lanePos);
+        car.rotation.y = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      } else {
+        car.position.set(lanePos, 0.02, -CITY_SIZE + Math.random() * CITY_SIZE * 2);
+        car.rotation.y = dir > 0 ? 0 : Math.PI;
+      }
+      scene.add(car);
+      cars.push(car);
+    }
+    function updateCars(dt) {
+      for (const car of cars) {
+        const d = car.userData;
+        if (d.alongX) {
+          car.position.x += d.dir * d.speed * dt;
+          if (car.position.x > CITY_SIZE) car.position.x = -CITY_SIZE;
+          if (car.position.x < -CITY_SIZE) car.position.x = CITY_SIZE;
+        } else {
+          car.position.z += d.dir * d.speed * dt;
+          if (car.position.z > CITY_SIZE) car.position.z = -CITY_SIZE;
+          if (car.position.z < -CITY_SIZE) car.position.z = CITY_SIZE;
+        }
+      }
+    }
+
+    // Soft fake contact-shadow blob under the hero — big cheap boost to ground perception
+    function makeShadowTexture() {
+      const c = document.createElement('canvas');
+      c.width = 64; c.height = 64;
+      const ctx = c.getContext('2d');
+      const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(0,0,0,0.55)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 64, 64);
+      return c;
+    }
+    const heroShadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.8, 1.8),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(makeShadowTexture()), transparent: true, depthWrite: false })
+    );
+    heroShadow.rotation.x = -Math.PI / 2;
+    scene.add(heroShadow);
+    function getGroundHeightBelow(x, y, z) {
+      let top = 0;
+      for (const b of buildings) {
+        const p = b.geometry.parameters;
+        const halfW = p.width / 2, halfD = p.depth / 2;
+        if (x > b.position.x - halfW && x < b.position.x + halfW && z > b.position.z - halfD && z < b.position.z + halfD) {
+          const topY = b.position.y + p.height / 2;
+          if (topY <= y + 0.05 && topY > top) top = topY;
+        }
+      }
+      return top;
+    }
+
     // ---------- Orbs ----------
     const orbs = [];
     const orbGeo = new THREE.SphereGeometry(0.9, 16, 16);
@@ -187,71 +317,108 @@ export default function SkylineSwingerMobile() {
       orbs.push(orb);
     }
 
-    // ---------- Enemies (original robotic "Voltbots") ----------
+    // ---------- Enemies (original robotic "Voltbots", plus Heavy and Flyer variants) ----------
     const enemies = [];
-    function makeEnemy(x, z, groundY) {
+    function makeEnemy(x, z, groundY, type = 'grunt') {
       const grp = new THREE.Group();
-      const bodyMat2 = new THREE.MeshStandardMaterial({ color: 0x2b2f3a, metalness: 0.4, roughness: 0.5 });
       const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff2c3c, emissive: 0xff2c3c, emissiveIntensity: 1.4 });
+      let eye, health, speed, dmg, attackRange, hoverHeight = null, shootRange = 0;
 
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 8), bodyMat2);
-      body.position.y = 1.0;
-      body.castShadow = true;
-      grp.add(body);
-      const headM = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 10), bodyMat2);
-      headM.position.y = 1.75;
-      headM.castShadow = true;
-      grp.add(headM);
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), eyeMat);
-      eye.position.set(0, 1.75, 0.3);
-      grp.add(eye);
-      const armGeo2 = new THREE.CylinderGeometry(0.12, 0.12, 0.6, 6);
-      const armL2 = new THREE.Mesh(armGeo2, bodyMat2);
-      armL2.position.set(-0.55, 1.15, 0);
-      grp.add(armL2);
-      const armR2 = new THREE.Mesh(armGeo2, bodyMat2);
-      armR2.position.set(0.55, 1.15, 0);
-      grp.add(armR2);
-      const legGeo2 = new THREE.CylinderGeometry(0.15, 0.13, 0.55, 6);
-      const legL2 = new THREE.Mesh(legGeo2, bodyMat2);
-      legL2.position.set(-0.18, 0.28, 0);
-      legL2.castShadow = true;
-      grp.add(legL2);
-      const legR2 = new THREE.Mesh(legGeo2, bodyMat2);
-      legR2.position.set(0.18, 0.28, 0);
-      legR2.castShadow = true;
-      grp.add(legR2);
+      if (type === 'heavy') {
+        const bodyMat2 = new THREE.MeshStandardMaterial({ color: 0x1f2530, metalness: 0.5, roughness: 0.45 });
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 1.7, 8), bodyMat2);
+        body.position.y = 1.3; body.castShadow = true; grp.add(body);
+        const headM = new THREE.Mesh(new THREE.SphereGeometry(0.46, 10, 10), bodyMat2);
+        headM.position.y = 2.35; headM.castShadow = true; grp.add(headM);
+        eye = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), eyeMat);
+        eye.position.set(0, 2.35, 0.42); grp.add(eye);
+        const armGeoH = new THREE.CylinderGeometry(0.18, 0.18, 0.9, 6);
+        const armLH = new THREE.Mesh(armGeoH, bodyMat2); armLH.position.set(-0.8, 1.5, 0); grp.add(armLH);
+        const armRH = new THREE.Mesh(armGeoH, bodyMat2); armRH.position.set(0.8, 1.5, 0); grp.add(armRH);
+        const legGeoH = new THREE.CylinderGeometry(0.22, 0.19, 0.75, 6);
+        const legLH = new THREE.Mesh(legGeoH, bodyMat2); legLH.position.set(-0.26, 0.38, 0); legLH.castShadow = true; grp.add(legLH);
+        const legRH = new THREE.Mesh(legGeoH, bodyMat2); legRH.position.set(0.26, 0.38, 0); legRH.castShadow = true; grp.add(legRH);
+        grp.position.set(x, groundY + 1.85, z);
+        health = 110; speed = 1.9; dmg = 16; attackRange = 2.0;
+      } else if (type === 'flyer') {
+        const bodyMat3 = new THREE.MeshStandardMaterial({ color: 0x445566, metalness: 0.6, roughness: 0.3 });
+        const domeMat = new THREE.MeshStandardMaterial({ color: 0x88e0ff, emissive: 0x2288aa, emissiveIntensity: 0.8, transparent: true, opacity: 0.85 });
+        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 0.25, 10), bodyMat3);
+        disc.castShadow = true; grp.add(disc);
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 10, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
+        dome.position.y = 0.12; grp.add(dome);
+        eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), eyeMat);
+        eye.position.set(0, 0.15, 0.35); grp.add(eye);
+        hoverHeight = groundY + 9 + Math.random() * 4;
+        grp.position.set(x, hoverHeight, z);
+        health = 25; speed = 5.5; dmg = 10; attackRange = 0; shootRange = 32;
+      } else {
+        const bodyMat2 = new THREE.MeshStandardMaterial({ color: 0x2b2f3a, metalness: 0.4, roughness: 0.5 });
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 8), bodyMat2);
+        body.position.y = 1.0; body.castShadow = true; grp.add(body);
+        const headM = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 10), bodyMat2);
+        headM.position.y = 1.75; headM.castShadow = true; grp.add(headM);
+        eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), eyeMat);
+        eye.position.set(0, 1.75, 0.3); grp.add(eye);
+        const armGeo2 = new THREE.CylinderGeometry(0.12, 0.12, 0.6, 6);
+        const armL2 = new THREE.Mesh(armGeo2, bodyMat2); armL2.position.set(-0.55, 1.15, 0); grp.add(armL2);
+        const armR2 = new THREE.Mesh(armGeo2, bodyMat2); armR2.position.set(0.55, 1.15, 0); grp.add(armR2);
+        const legGeo2 = new THREE.CylinderGeometry(0.15, 0.13, 0.55, 6);
+        const legL2 = new THREE.Mesh(legGeo2, bodyMat2); legL2.position.set(-0.18, 0.28, 0); legL2.castShadow = true; grp.add(legL2);
+        const legR2 = new THREE.Mesh(legGeo2, bodyMat2); legR2.position.set(0.18, 0.28, 0); legR2.castShadow = true; grp.add(legR2);
+        grp.position.set(x, groundY + 1.3, z);
+        health = 40; speed = 3 + Math.random() * 1.5; dmg = 8; attackRange = 1.6;
+      }
 
-      grp.position.set(x, groundY + 1.3, z);
       scene.add(grp);
       return {
         mesh: grp,
         eye,
-        health: 40,
-        maxHealth: 40,
+        type,
+        health,
+        maxHealth: health,
         alive: true,
         state: 'patrol',
-        patrolTarget: new THREE.Vector3(x, groundY + 1.3, z),
+        patrolTarget: new THREE.Vector3(grp.position.x, grp.position.y, grp.position.z),
         groundY,
-        speed: 3 + Math.random() * 1.5,
+        hoverHeight,
+        speed,
+        dmg,
+        attackRange,
+        shootRange,
         lastAttack: 0,
+        shootTimer: Math.random() * 2,
         hitFlashT: 0,
         wanderTimer: 0
       };
     }
 
-    // spawn on ground plazas
-    for (let i = 0; i < 10; i++) {
+    // spawn grunts on ground plazas
+    for (let i = 0; i < 8; i++) {
       const x = (Math.random() - 0.5) * CITY_SIZE * 1.4;
       const z = (Math.random() - 0.5) * CITY_SIZE * 1.4;
       if (Math.abs(x) < 16 && Math.abs(z) < 16) continue;
-      enemies.push(makeEnemy(x, z, 0));
+      enemies.push(makeEnemy(x, z, 0, 'grunt'));
     }
-    // spawn a few on rooftops
-    for (let i = 0; i < buildings.length && i < 60; i += 6) {
+    // spawn heavy units — slower, tougher, hit harder
+    for (let i = 0; i < 3; i++) {
+      const x = (Math.random() - 0.5) * CITY_SIZE * 1.4;
+      const z = (Math.random() - 0.5) * CITY_SIZE * 1.4;
+      if (Math.abs(x) < 20 && Math.abs(z) < 20) continue;
+      enemies.push(makeEnemy(x, z, 0, 'heavy'));
+    }
+    // spawn hovering flyer drones that snipe from range
+    for (let i = 0; i < 5; i++) {
+      const x = (Math.random() - 0.5) * CITY_SIZE * 1.6;
+      const z = (Math.random() - 0.5) * CITY_SIZE * 1.6;
+      if (Math.abs(x) < 20 && Math.abs(z) < 20) continue;
+      enemies.push(makeEnemy(x, z, 0, 'flyer'));
+    }
+    // a few grunts on rooftops
+    for (let i = 0; i < buildings.length && i < 60; i += 10) {
       const b = buildings[i];
       const topY = b.position.y + b.geometry.parameters.height / 2;
-      enemies.push(makeEnemy(b.position.x, b.position.z, topY));
+      enemies.push(makeEnemy(b.position.x, b.position.z, topY, 'grunt'));
     }
 
     // ---------- Hero ----------
@@ -319,6 +486,7 @@ export default function SkylineSwingerMobile() {
     let swingAnchor = null;
     let swingLength = 0;
     let onGround = false;
+    let onGroundPrev = false;
     let webLine = null;
     let yaw = 0, pitch = -0.15;
     let webPressed = false;
@@ -326,6 +494,10 @@ export default function SkylineSwingerMobile() {
     let fightRequested = false;
     let playerHealth = 100;
     let invincibleT = 0;
+    let attackCooldownT = 0;
+    let punchT = 0;
+    let shakeT = 0, shakeMag = 0;
+    const PUNCH_DURATION = 0.28;
     const smoothedJoy = { x: 0, y: 0 };
     const joystick = { active: false, id: null, originX: 0, originY: 0, x: 0, y: 0 };
     const look = { active: false, id: null, lastX: 0, lastY: 0 };
@@ -335,11 +507,122 @@ export default function SkylineSwingerMobile() {
     const camLookAt = new THREE.Vector3();
     let camInit = false;
 
+    // ---------- Procedural sound effects (no audio files — synthesized on the fly) ----------
+    function playTone({ freq = 440, freqEnd = null, duration = 0.15, type = 'sine', gain = 0.15, delay = 0 }) {
+      if (!audioCtx) return;
+      const t0 = audioCtx.currentTime + delay;
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      if (freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), t0 + duration);
+      g.gain.setValueAtTime(gain, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(g).connect(audioCtx.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.02);
+    }
+    function playNoise({ duration = 0.2, gain = 0.25, filterFreq = 800 }) {
+      if (!audioCtx) return;
+      const bufferSize = Math.max(1, Math.floor(audioCtx.sampleRate * duration));
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = filterFreq;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(gain, audioCtx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+      src.connect(filter).connect(g).connect(audioCtx.destination);
+      src.start();
+    }
+    function sfxSwing() { playTone({ freq: 260, freqEnd: 640, duration: 0.16, type: 'sine', gain: 0.14 }); }
+    function sfxRelease() { playTone({ freq: 500, freqEnd: 340, duration: 0.1, type: 'sine', gain: 0.08 }); }
+    function sfxJump() { playTone({ freq: 420, freqEnd: 760, duration: 0.12, type: 'triangle', gain: 0.14 }); }
+    function sfxLand() { playNoise({ duration: 0.14, gain: 0.22, filterFreq: 350 }); }
+    function sfxPunch() { playTone({ freq: 180, type: 'square', duration: 0.07, gain: 0.18 }); }
+    function sfxHit() { playTone({ freq: 900, freqEnd: 280, duration: 0.1, type: 'sawtooth', gain: 0.14 }); }
+    function sfxDefeat() {
+      playNoise({ duration: 0.3, gain: 0.28, filterFreq: 1200 });
+      playTone({ freq: 520, freqEnd: 120, duration: 0.3, type: 'sawtooth', gain: 0.12, delay: 0.02 });
+    }
+    function sfxOrb() { playTone({ freq: 760, freqEnd: 1400, duration: 0.14, type: 'sine', gain: 0.16 }); }
+    function sfxDamage() { playTone({ freq: 180, freqEnd: 70, duration: 0.22, type: 'sawtooth', gain: 0.2 }); }
+    function sfxZap() { playTone({ freq: 1100, freqEnd: 500, duration: 0.09, type: 'square', gain: 0.1 }); }
+
+    // ---------- Lightweight particle bursts (hit sparks, dust, explosions) ----------
+    const particles = [];
+    const particleGeo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+    function spawnBurst(pos, color, count = 10, opts = {}) {
+      const { speed = 6, life = 0.5, gravity = -18, size = 1 } = opts;
+      for (let i = 0; i < count; i++) {
+        const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 });
+        const m = new THREE.Mesh(particleGeo, mat);
+        m.scale.setScalar(size);
+        m.position.copy(pos);
+        scene.add(m);
+        const dir = new THREE.Vector3((Math.random() - 0.5), Math.random() * 0.6 + 0.2, (Math.random() - 0.5)).normalize();
+        const vel = dir.multiplyScalar(speed * (0.5 + Math.random() * 0.5));
+        particles.push({ mesh: m, vel, life, maxLife: life, gravity });
+      }
+    }
+    function updateParticles(dt) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.vel.y += p.gravity * dt;
+        p.mesh.position.addScaledVector(p.vel, dt);
+        p.life -= dt;
+        p.mesh.material.opacity = Math.max(0, p.life / p.maxLife);
+        p.mesh.scale.multiplyScalar(0.98);
+        if (p.life <= 0) {
+          scene.remove(p.mesh);
+          p.mesh.material.dispose();
+          particles.splice(i, 1);
+        }
+      }
+    }
+
+    // ---------- Flyer projectiles ----------
+    const projectiles = [];
+    const projGeo = new THREE.SphereGeometry(0.18, 8, 8);
+    const projMat = new THREE.MeshStandardMaterial({ color: 0xff3355, emissive: 0xff3355, emissiveIntensity: 1.5 });
+    function spawnProjectile(from, to, opts = {}) {
+      const { speed = 20, damage = 10 } = opts;
+      const m = new THREE.Mesh(projGeo, projMat);
+      m.position.copy(from);
+      scene.add(m);
+      const dir = new THREE.Vector3().subVectors(to, from).normalize();
+      projectiles.push({ mesh: m, vel: dir.multiplyScalar(speed), damage, life: 3 });
+    }
+    function updateProjectiles(dt) {
+      for (let i = projectiles.length - 1; i >= 0; i--) {
+        const p = projectiles[i];
+        p.mesh.position.addScaledVector(p.vel, dt);
+        p.life -= dt;
+        if (p.mesh.position.distanceTo(hero.position) < 1.3) {
+          damagePlayer(p.damage, p.vel.clone().normalize(), 3);
+          spawnBurst(p.mesh.position, 0xff3355, 6, { speed: 4, life: 0.3, size: 0.6 });
+          scene.remove(p.mesh);
+          projectiles.splice(i, 1);
+          continue;
+        }
+        if (p.life <= 0) { scene.remove(p.mesh); projectiles.splice(i, 1); }
+      }
+    }
+
     let msgTimeout;
     function showMsg(t) {
       setMessage(t);
       clearTimeout(msgTimeout);
       msgTimeout = setTimeout(() => setMessage(''), 900);
+    }
+
+    function triggerShake(mag, dur) {
+      shakeMag = Math.max(shakeMag, mag);
+      shakeT = Math.max(shakeT, dur);
     }
 
     function raycastFromCamera() {
@@ -358,11 +641,13 @@ export default function SkylineSwingerMobile() {
       swingAnchor = point;
       swingLength = hero.position.distanceTo(point);
       isSwinging = true;
+      sfxSwing();
       showMsg('Web attached!');
     }
     function releaseSwing() {
       if (isSwinging) {
         isSwinging = false;
+        sfxRelease();
         showMsg('Released');
       }
     }
@@ -430,11 +715,19 @@ export default function SkylineSwingerMobile() {
         heroVelocity.x += (moveX * speed - heroVelocity.x) * smoothing;
         heroVelocity.z += (moveZ * speed - heroVelocity.z) * smoothing;
         heroVelocity.y += GRAVITY * dt;
-        if (onGround && jumpPressed) heroVelocity.y = 11;
+        if (onGround && jumpPressed) { heroVelocity.y = 11; sfxJump(); }
         hero.position.addScaledVector(heroVelocity, dt);
       }
 
+      const preLandVY = heroVelocity.y;
       checkGround();
+      if (onGround && !onGroundPrev && preLandVY < -13) {
+        spawnBurst(hero.position.clone(), 0xcfc7b3, 8, { speed: 3, life: 0.4, gravity: -25, size: 0.7 });
+        triggerShake(0.1, 0.15);
+        sfxLand();
+      }
+      onGroundPrev = onGround;
+
       if (moveX !== 0 || moveZ !== 0) hero.rotation.y = Math.atan2(moveX, moveZ);
       hero.position.x = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.x));
       hero.position.z = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.z));
@@ -477,6 +770,15 @@ export default function SkylineSwingerMobile() {
         shoulderR.rotation.x += (0 - shoulderR.rotation.x) * 0.1;
         hero.rotation.z += (0 - hero.rotation.z) * 0.1;
       }
+
+      // punch swing overrides the right arm pose for its short duration
+      if (punchT > 0) {
+        punchT = Math.max(0, punchT - dt);
+        const p = 1 - punchT / PUNCH_DURATION;
+        shoulderR.rotation.x = -2.3 + p * 2.6;
+        shoulderR.rotation.z = -0.3 * Math.sin(p * Math.PI);
+        shoulderL.rotation.x = -0.25;
+      }
     }
 
     function updateCamera(dt, t) {
@@ -506,18 +808,41 @@ export default function SkylineSwingerMobile() {
         camPos.lerp(desiredPos, followT);
         camLookAt.lerp(desiredLookAt, followT);
       }
-      camera.position.copy(camPos);
+
+      // widen the field of view at swinging speed for a felt sense of velocity
+      const targetFov = 72 + (isSwinging ? Math.min(20, horizSpeed * 0.7) : 0);
+      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+      camera.updateProjectionMatrix();
+
+      const finalPos = camPos.clone();
+      if (shakeT > 0) {
+        shakeT -= dt;
+        finalPos.x += (Math.random() - 0.5) * shakeMag;
+        finalPos.y += (Math.random() - 0.5) * shakeMag;
+        finalPos.z += (Math.random() - 0.5) * shakeMag;
+        if (shakeT <= 0) shakeMag = 0;
+      }
+      camera.position.copy(finalPos);
       camera.lookAt(camLookAt);
     }
 
+    const webTubeMat = new THREE.MeshBasicMaterial({ color: 0xf5f5ff, transparent: true, opacity: 0.9 });
     function updateWebLine() {
-      if (webLine) { scene.remove(webLine); webLine = null; }
-      if (isSwinging) {
-        const geo = new THREE.BufferGeometry().setFromPoints([
-          hero.position.clone().add(new THREE.Vector3(0, 1.5, 0)),
-          swingAnchor
-        ]);
-        webLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffffff }));
+      if (webLine) {
+        scene.remove(webLine);
+        webLine.geometry.dispose();
+        webLine = null;
+      }
+      if (isSwinging && swingAnchor) {
+        const start = new THREE.Vector3();
+        shoulderR.getWorldPosition(start);
+        const end = swingAnchor;
+        const dist = start.distanceTo(end);
+        const mid = start.clone().lerp(end, 0.5);
+        mid.y -= Math.min(2.5, dist * 0.08); // rope sags realistically instead of a rigid straight line
+        const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+        const tubeGeo = new THREE.TubeGeometry(curve, 10, 0.045, 5, false);
+        webLine = new THREE.Mesh(tubeGeo, webTubeMat);
         scene.add(webLine);
       }
     }
@@ -528,6 +853,8 @@ export default function SkylineSwingerMobile() {
         orb.position.y = orb.userData.baseY + Math.sin(t * 1.5 + orb.userData.phase) * 1.5;
         orb.rotation.y += dt * 2;
         if (hero.position.distanceTo(orb.position) < 2.2) {
+          spawnBurst(orb.position.clone(), 0x5ef2ff, 8, { speed: 4, life: 0.35, size: 0.5, gravity: -10 });
+          sfxOrb();
           scene.remove(orb);
           orbs.splice(i, 1);
           setScore(s => s + 1);
@@ -536,13 +863,19 @@ export default function SkylineSwingerMobile() {
       }
     }
 
-    function damagePlayer(amount) {
+    function damagePlayer(amount, knockDir = null, knockForce = 0) {
       if (invincibleT > 0) return;
       playerHealth = Math.max(0, playerHealth - amount);
       invincibleT = 0.8;
       setHealth(playerHealth);
       setHitFlash(true);
       setTimeout(() => setHitFlash(false), 150);
+      sfxDamage();
+      triggerShake(0.22, 0.28);
+      if (knockDir && knockForce) {
+        heroVelocity.x += knockDir.x * knockForce;
+        heroVelocity.z += knockDir.z * knockForce;
+      }
       if (playerHealth <= 0) {
         showMsg('Down! Recovering...');
         playerHealth = 100;
@@ -555,19 +888,26 @@ export default function SkylineSwingerMobile() {
     }
 
     function performAttack() {
-      const attackRadius = 3.2;
+      const attackRadius = 3.4;
       let hitAny = false;
+      let defeatedAny = false;
       for (const en of enemies) {
         if (!en.alive) continue;
         const d = hero.position.distanceTo(en.mesh.position);
         if (d < attackRadius) {
           hitAny = true;
-          en.health -= 20;
+          en.health -= 22;
           en.hitFlashT = 0.15;
+          spawnBurst(en.mesh.position.clone().add(new THREE.Vector3(0, 1, 0)), 0xffe066, 6, { speed: 5, life: 0.3, size: 0.6 });
+          sfxHit();
           const knock = new THREE.Vector3().subVectors(en.mesh.position, hero.position).normalize().multiplyScalar(2.5);
           en.mesh.position.add(knock);
           if (en.health <= 0 && en.alive) {
             en.alive = false;
+            defeatedAny = true;
+            spawnBurst(en.mesh.position.clone(), en.type === 'flyer' ? 0x88e0ff : 0xff5533, 14, { speed: 7, life: 0.6, size: 0.9 });
+            sfxDefeat();
+            if (d < 8) triggerShake(0.15, 0.2);
             const startScale = en.mesh.scale.clone();
             let fadeT = 0;
             const fadeInterval = setInterval(() => {
@@ -580,11 +920,12 @@ export default function SkylineSwingerMobile() {
               }
             }, 16);
             setDefeated(d2 => d2 + 1);
-            showMsg('Voltbot defeated!');
+            const label = en.type === 'heavy' ? 'Heavy Bot' : en.type === 'flyer' ? 'Drone' : 'Voltbot';
+            showMsg(`${label} defeated!`);
           }
         }
       }
-      if (hitAny) showMsg('Hit!');
+      if (!defeatedAny && hitAny) showMsg('Hit!');
     }
 
     function updateEnemies(dt, t) {
@@ -599,6 +940,50 @@ export default function SkylineSwingerMobile() {
           en.eye.material.emissiveIntensity = 1.2 + Math.sin(t * 4 + en.mesh.position.x) * 0.2;
         }
 
+        if (en.type === 'flyer') {
+          const bob = Math.sin(t * 1.6 + en.mesh.position.x) * 0.6;
+          const desiredY = en.hoverHeight + bob;
+          en.mesh.position.y += (desiredY - en.mesh.position.y) * Math.min(1, dt * 2);
+
+          if (distToPlayer < en.shootRange) {
+            const desired = new THREE.Vector3(hero.position.x, en.mesh.position.y, hero.position.z);
+            const toDesired = desired.clone().sub(en.mesh.position);
+            toDesired.y = 0;
+            if (toDesired.length() > 14) {
+              toDesired.normalize();
+              en.mesh.position.addScaledVector(toDesired, en.speed * dt);
+            }
+            en.mesh.lookAt(hero.position.x, en.mesh.position.y, hero.position.z);
+
+            en.shootTimer -= dt;
+            if (en.shootTimer <= 0) {
+              en.shootTimer = 1.6 + Math.random() * 0.8;
+              const from = en.mesh.position.clone();
+              const to = hero.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+              spawnProjectile(from, to, { speed: 20, damage: en.dmg });
+              sfxZap();
+            }
+          } else {
+            en.wanderTimer -= dt;
+            if (en.wanderTimer <= 0) {
+              en.wanderTimer = 3 + Math.random() * 3;
+              en.patrolTarget.set(
+                en.mesh.position.x + (Math.random() - 0.5) * 20,
+                en.hoverHeight,
+                en.mesh.position.z + (Math.random() - 0.5) * 20
+              );
+            }
+            const dir = new THREE.Vector3().subVectors(en.patrolTarget, en.mesh.position);
+            dir.y = 0;
+            if (dir.length() > 1) {
+              dir.normalize();
+              en.mesh.position.addScaledVector(dir, en.speed * 0.5 * dt);
+              en.mesh.lookAt(en.patrolTarget.x, en.mesh.position.y, en.patrolTarget.z);
+            }
+          }
+          continue;
+        }
+
         if (distToPlayer < 22) {
           en.state = 'chase';
         } else if (distToPlayer > 30) {
@@ -608,15 +993,15 @@ export default function SkylineSwingerMobile() {
         if (en.state === 'chase') {
           const dir = new THREE.Vector3().subVectors(hero.position, en.mesh.position);
           dir.y = 0;
-          if (dir.length() > 1.6) {
+          if (dir.length() > en.attackRange) {
             dir.normalize();
             en.mesh.position.addScaledVector(dir, en.speed * dt);
             en.mesh.lookAt(hero.position.x, en.mesh.position.y, hero.position.z);
           } else {
-            const now = t;
-            if (now - en.lastAttack > 1.1) {
-              en.lastAttack = now;
-              damagePlayer(8);
+            if (t - en.lastAttack > 1.1) {
+              en.lastAttack = t;
+              const knockDir = new THREE.Vector3().subVectors(hero.position, en.mesh.position).normalize();
+              damagePlayer(en.dmg, knockDir, en.type === 'heavy' ? 9 : 2);
             }
           }
         } else {
@@ -625,7 +1010,7 @@ export default function SkylineSwingerMobile() {
             en.wanderTimer = 2 + Math.random() * 3;
             en.patrolTarget.set(
               en.mesh.position.x + (Math.random() - 0.5) * 14,
-              en.groundY + 1.3,
+              en.groundY + (en.type === 'heavy' ? 1.85 : 1.3),
               en.mesh.position.z + (Math.random() - 0.5) * 14
             );
           }
@@ -640,18 +1025,46 @@ export default function SkylineSwingerMobile() {
       }
     }
 
+    function updateHeroShadow() {
+      const groundY = getGroundHeightBelow(hero.position.x, hero.position.y, hero.position.z);
+      heroShadow.position.set(hero.position.x, groundY + 0.03, hero.position.z);
+      const feetY = hero.position.y - 1.5;
+      const diff = Math.max(0, feetY - groundY);
+      heroShadow.scale.setScalar(Math.max(0.3, 1 - diff * 0.04));
+      heroShadow.material.opacity = Math.max(0.05, 0.5 - diff * 0.02);
+    }
+
     function animate() {
       animationId = requestAnimationFrame(animate);
       const dt = Math.min(clock.getDelta(), 0.05);
       const t = clock.getElapsedTime();
       if (invincibleT > 0) invincibleT -= dt;
+      if (attackCooldownT > 0) attackCooldownT -= dt;
       if (webPressed && !isSwinging) startSwing();
-      if (fightRequested) { performAttack(); fightRequested = false; }
+      if (fightRequested) {
+        fightRequested = false;
+        if (attackCooldownT <= 0) {
+          attackCooldownT = 0.45;
+          punchT = PUNCH_DURATION;
+          sfxPunch();
+          performAttack();
+        }
+      }
       updateHero(dt, t);
       updateEnemies(dt, t);
+      updateProjectiles(dt);
+      updateParticles(dt);
+      updateClouds(dt);
+      updateCars(dt);
       updateCamera(dt, t);
       updateWebLine();
       updateOrbs(dt, t);
+      updateHeroShadow();
+      if (fightBtnRef.current) fightBtnRef.current.style.opacity = attackCooldownT > 0 ? '0.45' : '1';
+      if (speedFxRef.current) {
+        const horizSpeed = Math.hypot(heroVelocity.x, heroVelocity.z);
+        speedFxRef.current.style.opacity = String(Math.min(0.35, Math.max(0, (horizSpeed - 15) * 0.025)));
+      }
       renderer.render(scene, camera);
     }
 
@@ -725,7 +1138,18 @@ export default function SkylineSwingerMobile() {
 
     function onWebStart(e) { e.stopPropagation(); webPressed = true; }
     function onWebEnd(e) { e.stopPropagation(); webPressed = false; releaseSwing(); }
-    function onJumpStart(e) { e.stopPropagation(); jumpPressed = true; }
+    function onJumpStart(e) {
+      e.stopPropagation();
+      if (isSwinging) {
+        // swing-jump: release with an upward boost on top of current momentum — a skill move for extra height/distance
+        releaseSwing();
+        heroVelocity.y = Math.max(heroVelocity.y, 0) + 10;
+        sfxJump();
+        showMsg('Swing Jump!');
+      } else {
+        jumpPressed = true;
+      }
+    }
     function onJumpEnd(e) { e.stopPropagation(); jumpPressed = false; }
     function onFightStart(e) { e.stopPropagation(); fightRequested = true; }
 
@@ -789,10 +1213,15 @@ export default function SkylineSwingerMobile() {
       {started && (
         <>
           <div style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none', opacity: 0,
+            background: 'radial-gradient(ellipse at center, rgba(255,255,255,0) 40%, rgba(255,255,255,0.9) 100%)'
+          }} ref={speedFxRef} />
+
+          <div style={{
             position: 'absolute', top: 10, left: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
             padding: '6px 12px', borderRadius: 10, fontSize: 12, lineHeight: 1.4
           }}>
-            Left side: move &nbsp; Right side: look
+            Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost
           </div>
           <div style={{
             position: 'absolute', top: 10, right: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
@@ -880,7 +1309,10 @@ export default function SkylineSwingerMobile() {
         }}>
           <h1 style={{ fontSize: 32, marginBottom: 4, color: '#ffd23f', letterSpacing: 2 }}>SKYLINE SWINGER</h1>
           <p style={{ maxWidth: 340, opacity: 0.85, lineHeight: 1.6, fontSize: 14 }}>
-            An original web-slinging hero soars through Meridian City. Drag left to move, drag right to look, hold WEB to swing between rooftops, collect glowing orbs, and FIGHT off patrolling Voltbots before they wear down your health.
+            An original web-slinging hero soars through Meridian City. Drag left to move, drag right to look,
+            hold WEB to swing between rooftops, tap JUMP mid-swing for a boosted release, collect glowing orbs,
+            and FIGHT off patrolling Voltbots, armored Heavies, and sniping drone Flyers before they wear down
+            your health.
           </p>
           <button
             onClick={startGame}
