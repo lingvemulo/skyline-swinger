@@ -58,11 +58,15 @@ export default function SkylineSwingerMobile() {
     const skyGeo = new THREE.SphereGeometry(480, 24, 16);
     const skyColorsTop = new THREE.Color(0x2f6fb0);
     const skyColorsHorizon = new THREE.Color(0xbfe0f2);
+    const skyColorsWarm = new THREE.Color(0xffdfb0);
     const skyPos = skyGeo.attributes.position;
     const skyColors = [];
     for (let i = 0; i < skyPos.count; i++) {
       const yNorm = THREE.MathUtils.clamp((skyPos.getY(i) / 480 + 1) / 2, 0, 1);
       const c = skyColorsHorizon.clone().lerp(skyColorsTop, Math.pow(yNorm, 0.55));
+      // warm haze band near the horizon, like real atmospheric scattering
+      const warmFactor = Math.max(0, 1 - Math.abs(yNorm - 0.52) * 7);
+      c.lerp(skyColorsWarm, warmFactor * 0.45);
       skyColors.push(c.r, c.g, c.b);
     }
     skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(skyColors, 3));
@@ -172,6 +176,37 @@ export default function SkylineSwingerMobile() {
     facadeTexture.wrapS = THREE.RepeatWrapping;
     facadeTexture.wrapT = THREE.RepeatWrapping;
 
+    // Procedural mullion-grid texture for glass-tower facades — regular dark
+    // grid lines over a cool glass tint, distinct from the lit-window concrete look
+    function makeGlassTexture() {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 256;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#7fb2d8';
+      ctx.fillRect(0, 0, 128, 256);
+      const cols = 8, rows = 16;
+      ctx.strokeStyle = 'rgba(20,30,40,0.5)';
+      ctx.lineWidth = 2;
+      for (let col = 0; col <= cols; col++) {
+        const x = (128 / cols) * col;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
+      }
+      for (let r = 0; r <= rows; r++) {
+        const y = (256 / rows) * r;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(128, y); ctx.stroke();
+      }
+      // occasional bright reflective panel
+      for (let i = 0; i < 10; i++) {
+        ctx.fillStyle = `rgba(255,255,255,${0.05 + Math.random() * 0.15})`;
+        const cw = 128 / cols, rh = 256 / rows;
+        ctx.fillRect(Math.floor(Math.random() * cols) * cw, Math.floor(Math.random() * rows) * rh, cw, rh);
+      }
+      return c;
+    }
+    const glassTexture = new THREE.CanvasTexture(makeGlassTexture());
+    glassTexture.wrapS = THREE.RepeatWrapping;
+    glassTexture.wrapT = THREE.RepeatWrapping;
+
     // ---------- City ----------
     const buildings = [];
     function buildingColor() {
@@ -183,13 +218,14 @@ export default function SkylineSwingerMobile() {
         if (Math.random() < 0.35) continue;
         if (Math.abs(x) < 14 && Math.abs(z) < 14) continue;
         const w = 8 + Math.random() * 7, d = 8 + Math.random() * 7, h = 14 + Math.random() * 60;
+        const isGlass = Math.random() < 0.3;
 
-        const tex = facadeTexture.clone();
+        const tex = (isGlass ? glassTexture : facadeTexture).clone();
         tex.needsUpdate = true;
         tex.repeat.set(Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(h / 6)));
-        const facadeMat = new THREE.MeshStandardMaterial({
-          map: tex, color: buildingColor(), roughness: 0.75, metalness: 0.15
-        });
+        const facadeMat = isGlass
+          ? new THREE.MeshStandardMaterial({ map: tex, color: 0xbcd9ec, roughness: 0.15, metalness: 0.85 })
+          : new THREE.MeshStandardMaterial({ map: tex, color: buildingColor(), roughness: 0.75, metalness: 0.15 });
         const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), facadeMat);
         b.position.set(x + (Math.random() - 0.5) * 6, h / 2, z + (Math.random() - 0.5) * 6);
         b.castShadow = true;
@@ -203,7 +239,60 @@ export default function SkylineSwingerMobile() {
         );
         trim.position.set(b.position.x, h + 0.3, b.position.z);
         scene.add(trim);
+
+        // foundation band grounds the building against the street
+        const base = new THREE.Mesh(
+          new THREE.BoxGeometry(w * 1.06, 0.5, d * 1.06),
+          new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.9, metalness: 0.1 })
+        );
+        base.position.set(b.position.x, 0.25, b.position.z);
+        base.receiveShadow = true;
+        scene.add(base);
+
+        // rooftop detail — antenna or water tank, breaks up the skyline silhouette
+        const roofRand = Math.random();
+        if (roofRand < 0.25) {
+          const antenna = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.08, 0.1, 4 + Math.random() * 3, 6),
+            new THREE.MeshStandardMaterial({ color: 0x2a2f38, roughness: 0.6, metalness: 0.4 })
+          );
+          antenna.position.set(b.position.x, h + 2, b.position.z);
+          scene.add(antenna);
+        } else if (roofRand < 0.45) {
+          const tankGrp = new THREE.Group();
+          const tankMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.8, metalness: 0.1 });
+          const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 1.6, 10), tankMat);
+          tank.position.y = 1.3;
+          tankGrp.add(tank);
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(1.3, 0.8, 10), tankMat);
+          cone.position.y = 2.5;
+          tankGrp.add(cone);
+          tankGrp.position.set(b.position.x, h + 0.6, b.position.z);
+          scene.add(tankGrp);
+        } else if (roofRand < 0.6 && h > 30) {
+          // setback tier — a smaller second tower stacked on top, common on real skyscrapers
+          const w2 = w * (0.4 + Math.random() * 0.3), d2 = d * (0.4 + Math.random() * 0.3), h2 = 6 + Math.random() * 14;
+          const tier = new THREE.Mesh(new THREE.BoxGeometry(w2, h2, d2), facadeMat);
+          tier.position.set(b.position.x, h + h2 / 2, b.position.z);
+          tier.castShadow = true;
+          scene.add(tier);
+        }
       }
+    }
+
+    // Distant hazy skyline ring — sits just inside the fog's far distance so it
+    // reads as a soft, atmospheric silhouette rather than a hard-edged cutout,
+    // giving the city a sense of scale beyond the playable area.
+    const distantSkylineMat = new THREE.MeshBasicMaterial({ color: 0x9fc4dd, fog: true });
+    for (let i = 0; i < 44; i++) {
+      const angle = (i / 44) * Math.PI * 2 + Math.random() * 0.05;
+      const h = 20 + Math.random() * 75;
+      const w = 10 + Math.random() * 16;
+      const radius = 300 + Math.random() * 25;
+      const bx = Math.cos(angle) * radius, bz = Math.sin(angle) * radius;
+      const distB = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), distantSkylineMat);
+      distB.position.set(bx, h / 2, bz);
+      scene.add(distB);
     }
 
     // Populate clouds now that CITY_SIZE is known
@@ -269,6 +358,100 @@ export default function SkylineSwingerMobile() {
           car.position.z += d.dir * d.speed * dt;
           if (car.position.z > CITY_SIZE) car.position.z = -CITY_SIZE;
           if (car.position.z < -CITY_SIZE) car.position.z = CITY_SIZE;
+        }
+      }
+    }
+
+    // Ambient pedestrians — decorative civilians wandering the sidewalks/streets,
+    // purely visual (no collision or combat interaction) to keep the city feeling lived-in
+    function isInsideAnyBuilding(x, z) {
+      for (const b of buildings) {
+        const p = b.geometry.parameters;
+        const halfW = p.width / 2 + 1, halfD = p.depth / 2 + 1;
+        if (x > b.position.x - halfW && x < b.position.x + halfW && z > b.position.z - halfD && z < b.position.z + halfD) return true;
+      }
+      return false;
+    }
+    function makePedestrian() {
+      const grp = new THREE.Group();
+      const skinTones = [0xe8b98c, 0xc68642, 0x8d5524, 0xffdbac, 0xf1c27d];
+      const shirtColors = [0x3b6ea5, 0x8a3b3b, 0x3b8a5e, 0x6b5b95, 0x5b5b5b, 0xb0824a];
+      const pantsColors = [0x2b2b3a, 0x40403f, 0x333944];
+      const skinMat = new THREE.MeshStandardMaterial({ color: skinTones[Math.floor(Math.random() * skinTones.length)], roughness: 0.8 });
+      const shirtMat = new THREE.MeshStandardMaterial({ color: shirtColors[Math.floor(Math.random() * shirtColors.length)], roughness: 0.7 });
+      const pantsMat = new THREE.MeshStandardMaterial({ color: pantsColors[Math.floor(Math.random() * pantsColors.length)], roughness: 0.75 });
+
+      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.6, 8), shirtMat);
+      torso.position.y = 1.1; torso.castShadow = true; grp.add(torso);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 10), skinMat);
+      head.position.y = 1.58; head.castShadow = true; grp.add(head);
+
+      const armGeoP = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6);
+      const shoulderPL = new THREE.Group();
+      shoulderPL.position.set(-0.28, 1.35, 0);
+      const armPL = new THREE.Mesh(armGeoP, skinMat); armPL.position.y = -0.25; shoulderPL.add(armPL);
+      grp.add(shoulderPL);
+      const shoulderPR = new THREE.Group();
+      shoulderPR.position.set(0.28, 1.35, 0);
+      const armPR = new THREE.Mesh(armGeoP, skinMat); armPR.position.y = -0.25; shoulderPR.add(armPR);
+      grp.add(shoulderPR);
+
+      const legGeoP = new THREE.CylinderGeometry(0.09, 0.08, 0.65, 6);
+      const hipPL = new THREE.Group();
+      hipPL.position.set(-0.11, 0.65, 0);
+      const legPL = new THREE.Mesh(legGeoP, pantsMat); legPL.position.y = -0.32; legPL.castShadow = true; hipPL.add(legPL);
+      grp.add(hipPL);
+      const hipPR = new THREE.Group();
+      hipPR.position.set(0.11, 0.65, 0);
+      const legPR = new THREE.Mesh(legGeoP, pantsMat); legPR.position.y = -0.32; legPR.castShadow = true; hipPR.add(legPR);
+      grp.add(hipPR);
+
+      return { grp, hipL: hipPL, hipR: hipPR, shoulderL: shoulderPL, shoulderR: shoulderPR };
+    }
+    const pedestrians = [];
+    for (let i = 0; i < 14; i++) {
+      let x = 0, z = 0, tries = 0;
+      do {
+        x = (Math.random() - 0.5) * CITY_SIZE * 1.3;
+        z = (Math.random() - 0.5) * CITY_SIZE * 1.3;
+        tries++;
+      } while (isInsideAnyBuilding(x, z) && tries < 10);
+      if (Math.abs(x) < 10 && Math.abs(z) < 10) continue;
+      if (isInsideAnyBuilding(x, z)) continue;
+      const ped = makePedestrian();
+      ped.grp.position.set(x, 0, z);
+      scene.add(ped.grp);
+      pedestrians.push({ ...ped, target: new THREE.Vector3(x, 0, z), speed: 1 + Math.random() * 0.8, wanderTimer: Math.random() * 3 });
+    }
+    function updatePedestrians(dt, t) {
+      for (const p of pedestrians) {
+        p.wanderTimer -= dt;
+        if (p.wanderTimer <= 0) {
+          p.wanderTimer = 3 + Math.random() * 4;
+          let nx = p.grp.position.x, nz = p.grp.position.z, tries = 0;
+          do {
+            nx = p.grp.position.x + (Math.random() - 0.5) * 30;
+            nz = p.grp.position.z + (Math.random() - 0.5) * 30;
+            tries++;
+          } while (isInsideAnyBuilding(nx, nz) && tries < 6);
+          nx = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, nx));
+          nz = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, nz));
+          p.target.set(nx, 0, nz);
+        }
+        const dir = new THREE.Vector3().subVectors(p.target, p.grp.position);
+        dir.y = 0;
+        const dist = dir.length();
+        if (dist > 0.3) {
+          dir.normalize();
+          p.grp.position.addScaledVector(dir, p.speed * dt);
+          p.grp.lookAt(p.target.x, p.grp.position.y, p.target.z);
+          const phase = t * (5 + p.speed * 2);
+          const swing = Math.sin(phase) * 0.5;
+          p.hipL.rotation.x = swing; p.hipR.rotation.x = -swing;
+          p.shoulderL.rotation.x = -swing * 0.7; p.shoulderR.rotation.x = swing * 0.7;
+        } else {
+          p.hipL.rotation.x *= 0.9; p.hipR.rotation.x *= 0.9;
+          p.shoulderL.rotation.x *= 0.9; p.shoulderR.rotation.x *= 0.9;
         }
       }
     }
@@ -1056,6 +1239,7 @@ export default function SkylineSwingerMobile() {
       updateParticles(dt);
       updateClouds(dt);
       updateCars(dt);
+      updatePedestrians(dt, t);
       updateCamera(dt, t);
       updateWebLine();
       updateOrbs(dt, t);
