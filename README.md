@@ -17,6 +17,10 @@ An original web-swinging 3D browser game (Three.js + React), built for touch con
   Each is a hotel, apartment block, shop or office with 3 floors (stairs + elevator with a
   floor-button panel) and a top-floor door out to the building's real rooftop
   (rooftop stair hut leads back in). Interior code lives in `src/interiors.js`.
+- Furnished interiors (`src/furniture.js`): sofas, beds, kitchens, desks,
+  shop shelves and fridges, bar, meeting room etc., photo-textured floors and
+  walls, ceiling lights, and windows with a city view. Static parts are merged
+  per material at load so each building is only a few dozen draw calls.
 - Add `?debug` to the URL to expose a `window.__ss` test hook (teleport,
   joystick, enter buildings) for testing from a desktop browser
 - Walk-cycle limb animation, camera bob, filmic tone mapping
@@ -42,3 +46,8 @@ npm run dev
 - Push to GitHub
 - Possibly split `App.jsx` into smaller modules as it grows (currently one file
   for portability between chat sessions)
+
+## Credits
+
+Floor, wall and wood textures in `public/textures` are from
+[Poly Haven](https://polyhaven.com) (CC0).

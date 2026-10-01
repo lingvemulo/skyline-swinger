@@ -811,6 +811,7 @@ export default function SkylineSwingerMobile() {
     }
     function setIndoors(interior) {
       insideBuilding = interior;
+      for (const i of Object.values(interiors)) i.group.visible = i === interior;
       setIndoorsUI(!!interior);
       sun.intensity = interior ? 0.15 : SUN_OUTSIDE;
       hemi.intensity = interior ? 0.45 : HEMI_OUTSIDE;
@@ -970,6 +971,10 @@ export default function SkylineSwingerMobile() {
     hipR.add(legMeshR);
     hero.add(hipR);
 
+    // hero.position sits 1.5 above the feet (the physics convention); the
+    // body was modelled with its feet 0.1 above the group origin, which left
+    // the hero floating 1.6 above the ground — drop every part to fix that
+    for (const c of hero.children) c.position.y -= 1.6;
     hero.position.set(0, 1.5, 0);
     scene.add(hero);
 
@@ -1121,7 +1126,7 @@ export default function SkylineSwingerMobile() {
     function raycastFromCamera() {
       const dir = new THREE.Vector3(0, 0, -1);
       dir.applyEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
-      const origin = hero.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+      const origin = hero.position.clone().add(new THREE.Vector3(0, -0.4, 0));
       const raycaster = new THREE.Raycaster(origin, dir, 0, 140);
       const hits = raycaster.intersectObjects(buildings, false);
       if (hits.length > 0) return hits[0].point;
@@ -1287,8 +1292,9 @@ export default function SkylineSwingerMobile() {
         Math.sin(pitch) + 0.35,
         Math.cos(yaw) * Math.cos(pitch)
       ).multiplyScalar(camDist);
-      const desiredPos = hero.position.clone().add(offset).add(new THREE.Vector3(0, 1.2, 0));
-      const desiredLookAt = hero.position.clone().add(new THREE.Vector3(0, 1.3, 0));
+      // body centre is ~0.3 below hero.position (see the hero model note)
+      const desiredPos = hero.position.clone().add(offset).add(new THREE.Vector3(0, -0.4, 0));
+      const desiredLookAt = hero.position.clone().add(new THREE.Vector3(0, -0.3, 0));
 
       // subtle head-bob while running on the ground adds a tactile, physical feel
       const horizSpeed = Math.hypot(heroVelocity.x, heroVelocity.z);
@@ -1468,7 +1474,7 @@ export default function SkylineSwingerMobile() {
             if (en.shootTimer <= 0) {
               en.shootTimer = 1.6 + Math.random() * 0.8;
               const from = en.mesh.position.clone();
-              const to = hero.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+              const to = hero.position.clone().add(new THREE.Vector3(0, -0.3, 0));
               spawnProjectile(from, to, { speed: 20, damage: en.dmg });
               sfxZap();
             }

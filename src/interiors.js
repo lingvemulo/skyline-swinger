@@ -8,6 +8,9 @@
 // surface is at y = k * FLOOR_H. The hero's position is 1.5 above its feet
 // (the convention App.jsx uses outdoors too).
 
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { furnish } from './furniture.js';
+
 export const BUILDING_TYPES = ['hotel', 'apartment', 'shop', 'office'];
 export const FLOOR_H = 7;
 const HALF = 13;
@@ -19,7 +22,7 @@ const TYPE_INFO = {
   hotel: {
     label: 'Hotel',
     floors: ['Lobby', 'Hotel rooms', 'Lounge'],
-    wall: 0xd9c9a8, floor: 0x6b4a2f, light: 0xffd9a0,
+    wall: 0xf3e4cc, floor: 0x6b4a2f, light: 0xffd9a0,
   },
   apartment: {
     label: 'Apartments',
@@ -37,6 +40,57 @@ const TYPE_INFO = {
     wall: 0xdfe4ea, floor: 0x5d6670, light: 0xeef6ff,
   },
 };
+
+// Photo textures (Poly Haven, CC0) in public/textures, shared by all interiors.
+// [texture, tile size in world units, tint] per floor.
+const FLOOR_TEX = {
+  hotel: [['large_grey_tiles', 3.5, 0xf3e7d3], ['fabric', 2, 0x8a3a3a], ['herringbone_parquet', 3, 0xb98d62]],
+  apartment: [['herringbone_parquet', 3, 0xffffff], ['herringbone_parquet', 3, 0xffffff], ['concrete_floor_painted', 4, 0xffffff]],
+  shop: [['large_grey_tiles', 3, 0xffffff], ['concrete_floor_painted', 4, 0xdddddd], ['interior_tiles', 2.5, 0xffffff]],
+  office: [['laminate_floor_02', 3, 0xffffff], ['fabric', 2, 0x6d7a8c], ['laminate_floor_02', 3, 0xffffff]],
+};
+const WALL_TEX = { hotel: 'painted_plaster_wall', apartment: 'painted_plaster_wall', shop: 'painted_plaster_wall', office: 'painted_plaster_wall' };
+const texCache = {};
+// Neutral woven-fabric/carpet texture drawn in code, so tints show true colours.
+function fabricTex(THREE) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#d8d8d8';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 9000; i++) {
+    const v = 170 + Math.random() * 85;
+    ctx.fillStyle = `rgba(${v},${v},${v},0.5)`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 2, 1);
+  }
+  for (let y = 0; y < 256; y += 4) { ctx.fillStyle = 'rgba(0,0,0,0.04)'; ctx.fillRect(0, y, 256, 1); }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function loadTex(THREE, name) {
+  if (name === 'fabric') return texCache.fabric || (texCache.fabric = fabricTex(THREE));
+  if (!texCache[name]) {
+    const t = new THREE.TextureLoader().load(`/textures/${name}.jpg`);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    texCache[name] = t;
+  }
+  return texCache[name];
+}
+// Scale a BoxGeometry's UVs so a texture repeats every `tile` world units on every face.
+function worldUV(geo, w, h, d, tile) {
+  const uv = geo.attributes.uv;
+  const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+  for (let f = 0; f < 6; f++) {
+    for (let v = 0; v < 4; v++) {
+      const i = f * 4 + v;
+      uv.setXY(i, uv.getX(i) * dims[f][0] / tile, uv.getY(i) * dims[f][1] / tile);
+    }
+  }
+}
 
 // Interior partition walls per type, per floor: [x0, z0, x1, z1] (axis-aligned).
 // Gaps between segments are doorways. Kept clear of the shared stairwell
@@ -108,21 +162,28 @@ function buildInterior(THREE, scene, type, origin) {
   const solids = [];      // world-space Box3s the hero collides with / stands on
   const camBlockers = []; // meshes the camera must not pass through
 
-  const wallMat = new THREE.MeshStandardMaterial({ color: info.wall, roughness: 0.9 });
-  const floorMat = new THREE.MeshStandardMaterial({ color: info.floor, roughness: 0.75 });
+  const wallMat = new THREE.MeshStandardMaterial({ map: loadTex(THREE, WALL_TEX[type]), color: info.wall, roughness: 0.9 });
+  wallMat.userData.tile = 4;
+  const floorMats = FLOOR_TEX[type].map(([name, tile, tint]) => {
+    const m = new THREE.MeshStandardMaterial({ map: loadTex(THREE, name), color: tint, roughness: 0.55 });
+    m.userData.tile = tile;
+    return m;
+  });
   const ceilMat = new THREE.MeshStandardMaterial({ color: 0xf4f3ee, roughness: 0.95 });
   const stairMat = new THREE.MeshStandardMaterial({ color: 0x8c8f94, roughness: 0.8 });
   const railMat = new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: 0.4, metalness: 0.6 });
   const shaftMat = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.35, metalness: 0.7 });
   const doorGlowMat = new THREE.MeshStandardMaterial({ color: 0x120c08, emissive: 0xffcf7a, emissiveIntensity: 0.65 });
-  const slabMats = [floorMat, floorMat, floorMat, ceilMat, floorMat, floorMat]; // -y face = ceiling
 
   // Axis-aligned box in local coords; optionally solid and/or a camera blocker.
   function box(x0, y0, z0, x1, y1, z1, mat, { solid = true, cam = true } = {}) {
     const w = x1 - x0, h = y1 - y0, d = z1 - z0;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    const geo = new THREE.BoxGeometry(w, h, d);
+    if (mat.userData.tile) worldUV(geo, w, h, d, mat.userData.tile);
+    const m = new THREE.Mesh(geo, mat);
     m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
     m.receiveShadow = true;
+    m.userData.cam = cam;
     group.add(m);
     if (solid) {
       solids.push(new THREE.Box3(
@@ -130,26 +191,34 @@ function buildInterior(THREE, scene, type, origin) {
         new THREE.Vector3(x1 + origin.x, y1 + origin.y, z1 + origin.z)
       ));
     }
-    if (cam) camBlockers.push(m);
     return m;
   }
 
-  // Floor slab with an optional rectangular hole [hx0, hx1, hz0, hz1].
-  function slab(y, hole) {
-    const y0 = y - SLAB, y1 = y;
-    if (!hole) { box(-HALF, y0, -HALF, HALF, y1, HALF, slabMats); return; }
-    const [hx0, hx1, hz0, hz1] = hole;
-    box(-HALF, y0, -HALF, hx0, y1, HALF, slabMats);
-    box(hx1, y0, -HALF, HALF, y1, HALF, slabMats);
-    box(hx0, y0, -HALF, hx1, y1, hz0, slabMats);
-    box(hx0, y0, hz1, hx1, y1, HALF, slabMats);
+  // Floor slab (floor k's surface on top) with an optional rectangular hole
+  // [hx0, hx1, hz0, hz1]; the ceiling of the floor below is a plane under it.
+  function slab(k, hole) {
+    const y = k * FLOOR_H, y0 = y - SLAB, y1 = y;
+    const mat = floorMats[Math.min(k, 2)];
+    const rects = !hole ? [[-HALF, -HALF, HALF, HALF]] : [
+      [-HALF, -HALF, hole[0], HALF], [hole[1], -HALF, HALF, HALF],
+      [hole[0], -HALF, hole[1], hole[2]], [hole[0], hole[3], hole[1], HALF],
+    ];
+    for (const [x0, z0, x1, z1] of rects) {
+      box(x0, y0, z0, x1, y1, z1, mat);
+      if (k > 0) {
+        const c = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), ceilMat);
+        c.rotation.x = Math.PI / 2;
+        c.position.set((x0 + x1) / 2, y0 - 0.01, (z0 + z1) / 2);
+        group.add(c);
+      }
+    }
   }
 
   // Floors and ceilings
   slab(0);
-  slab(FLOOR_H, [LANE_A[0], LANE_A[1], STAIR_Z[0], STAIR_Z[1]]);
-  slab(FLOOR_H * 2, [LANE_B[0], LANE_B[1], STAIR_Z[0], STAIR_Z[1]]);
-  slab(FLOOR_H * 3);
+  slab(1, [LANE_A[0], LANE_A[1], STAIR_Z[0], STAIR_Z[1]]);
+  slab(2, [LANE_B[0], LANE_B[1], STAIR_Z[0], STAIR_Z[1]]);
+  slab(3);
 
   // Outer walls, full building height
   const H3 = FLOOR_H * 3;
@@ -198,6 +267,7 @@ function buildInterior(THREE, scene, type, origin) {
     const right = new THREE.Mesh(doorGeo, shaftMat);
     left.position.set(ELEV.doorX0 + doorW / 2, y0 + ELEV.doorH / 2, ELEV.z1 + 0.14);
     right.position.set(ELEV.doorX1 - doorW / 2, y0 + ELEV.doorH / 2, ELEV.z1 + 0.14);
+    left.userData.keep = right.userData.keep = true; // animated, so never merged
     group.add(left, right);
     elevatorDoors.push({ left, right, closedL: left.position.x, closedR: right.position.x, open: 0, w: doorW });
 
@@ -243,6 +313,14 @@ function buildInterior(THREE, scene, type, origin) {
   roofSign.rotation.y = -Math.PI / 2;
   group.add(roofSign);
 
+  furnish(THREE, {
+    group, solids, FLOOR_H, CEIL, type,
+    partitions: PARTITIONS[type],
+    tex: (name) => loadTex(THREE, name),
+    label: (text, bg, fg) => makeLabelTexture(THREE, text, { bg, fg, w: 512, h: 128 }),
+  });
+  bakeStatic(THREE, group, camBlockers);
+  group.visible = false; // App shows only the interior the hero is in
   scene.add(group);
 
   const at = (x, y, z) => new THREE.Vector3(x, y, z).add(origin);
@@ -272,6 +350,37 @@ function buildInterior(THREE, scene, type, origin) {
       return [at(-4, y, -4), at(5, y, 5), at(5, y, -6)];
     },
   };
+}
+
+// Merge every static mesh into one mesh per material (and per camera-blocking
+// flag), turning thousands of furniture parts into a few dozen draw calls.
+function bakeStatic(THREE, group, camBlockers) {
+  group.updateMatrixWorld(true);
+  const inv = group.matrixWorld.clone().invert();
+  const buckets = new Map();
+  const victims = [];
+  group.traverse((o) => {
+    if (!o.isMesh || o.userData.keep) return;
+    const key = o.material.uuid + (o.userData.cam ? '|cam' : '');
+    if (!buckets.has(key)) buckets.set(key, { mat: o.material, cam: !!o.userData.cam, geos: [] });
+    const g = o.geometry.index ? o.geometry.clone() : o.geometry.clone();
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+    for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+    buckets.get(key).geos.push(g);
+    victims.push(o);
+  });
+  for (const o of victims) { o.parent.remove(o); o.geometry.dispose(); }
+  for (const { mat, cam, geos } of buckets.values()) {
+    const merged = new THREE.Mesh(mergeGeometries(geos, false), mat);
+    merged.receiveShadow = true;
+    group.add(merged);
+    if (cam) camBlockers.push(merged);
+    geos.forEach(g => g.dispose());
+  }
+  // leftover empty furniture groups are harmless but drop them for tidiness
+  const empties = [];
+  group.traverse((o) => { if (o !== group && o.isGroup && o.children.length === 0) empties.push(o); });
+  empties.forEach(o => o.parent.remove(o));
 }
 
 export function createInteriors(THREE, scene) {
