@@ -155,26 +155,39 @@ export default function SkylineSwingerMobile() {
     scene.add(ground);
 
     // Shared procedural window-lit facade texture for buildings
-    function makeFacadeTexture() {
+    // Two canvases share one window layout: the colour map (light wall, dark
+    // glass) and an emissive map (black except lit windows) so lit windows
+    // glow instead of being darkened by the building tint.
+    function makeFacadeTextures() {
       const c = document.createElement('canvas');
-      c.width = 128; c.height = 256;
+      const e = document.createElement('canvas');
+      c.width = e.width = 128; c.height = e.height = 256;
       const ctx = c.getContext('2d');
-      ctx.fillStyle = '#33404f';
+      const ectx = e.getContext('2d');
+      ctx.fillStyle = '#d8dde4';
       ctx.fillRect(0, 0, 128, 256);
+      ectx.fillStyle = '#000';
+      ectx.fillRect(0, 0, 128, 256);
       const cols = 6, rows = 12;
       const cw = 128 / cols, rh = 256 / rows;
       for (let r = 0; r < rows; r++) {
         for (let col = 0; col < cols; col++) {
           const lit = Math.random() < 0.4;
-          ctx.fillStyle = lit ? 'rgba(255,224,150,0.95)' : 'rgba(20,26,36,0.9)';
-          ctx.fillRect(col * cw + cw * 0.15, r * rh + rh * 0.2, cw * 0.7, rh * 0.6);
+          const x = col * cw + cw * 0.15, y = r * rh + rh * 0.2, ww = cw * 0.7, wh = rh * 0.6;
+          ctx.fillStyle = lit ? '#ffe096' : '#1a2230';
+          ctx.fillRect(x, y, ww, wh);
+          if (lit) { ectx.fillStyle = '#ffd890'; ectx.fillRect(x, y, ww, wh); }
         }
       }
-      return c;
+      return [c, e];
     }
-    const facadeTexture = new THREE.CanvasTexture(makeFacadeTexture());
+    const [facadeCanvas, facadeEmissiveCanvas] = makeFacadeTextures();
+    const facadeTexture = new THREE.CanvasTexture(facadeCanvas);
     facadeTexture.wrapS = THREE.RepeatWrapping;
     facadeTexture.wrapT = THREE.RepeatWrapping;
+    const facadeEmissiveTexture = new THREE.CanvasTexture(facadeEmissiveCanvas);
+    facadeEmissiveTexture.wrapS = THREE.RepeatWrapping;
+    facadeEmissiveTexture.wrapT = THREE.RepeatWrapping;
 
     // Procedural mullion-grid texture for glass-tower facades — regular dark
     // grid lines over a cool glass tint, distinct from the lit-window concrete look
@@ -224,9 +237,18 @@ export default function SkylineSwingerMobile() {
         const tex = (isGlass ? glassTexture : facadeTexture).clone();
         tex.needsUpdate = true;
         tex.repeat.set(Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(h / 6)));
+        let emissiveTex = null;
+        if (!isGlass) {
+          emissiveTex = facadeEmissiveTexture.clone();
+          emissiveTex.needsUpdate = true;
+          emissiveTex.repeat.copy(tex.repeat);
+        }
         const facadeMat = isGlass
           ? new THREE.MeshStandardMaterial({ map: tex, color: 0xbcd9ec, roughness: 0.15, metalness: 0.85 })
-          : new THREE.MeshStandardMaterial({ map: tex, color: buildingColor(), roughness: 0.75, metalness: 0.15 });
+          : new THREE.MeshStandardMaterial({
+              map: tex, color: buildingColor(), roughness: 0.75, metalness: 0.15,
+              emissiveMap: emissiveTex, emissive: 0xffffff, emissiveIntensity: 0.9
+            });
         const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), facadeMat);
         b.position.set(x + (Math.random() - 0.5) * 6, h / 2, z + (Math.random() - 0.5) * 6);
         b.castShadow = true;
@@ -244,6 +266,7 @@ export default function SkylineSwingerMobile() {
           });
           const door = new THREE.Mesh(new THREE.PlaneGeometry(doorW, doorH), doorMat);
           door.position.set(b.position.x, doorH / 2 + 0.5, b.position.z - d / 2 - 0.03);
+          door.rotation.y = Math.PI; // PlaneGeometry faces +Z; turn it to face the street (-Z)
           scene.add(door);
           enterables.push({ doorPos: new THREE.Vector3(b.position.x, 0, b.position.z - d / 2 - 1.4) });
         }
