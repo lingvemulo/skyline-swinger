@@ -11,6 +11,8 @@ An original web-swinging 3D browser game (Three.js + React), built for touch con
   WEB / JUMP / FIGHT buttons
 - Patrolling robotic enemies ("Voltbots") with basic chase AI and melee combat
 - 40 collectible energy orbs
+- Walk-in building doors: some buildings have a glowing doorway leading to a
+  furnished interior lobby, with a matching door to head back outside
 - Walk-cycle limb animation, camera bob, filmic tone mapping
 
 ## Stack

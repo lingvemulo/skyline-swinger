@@ -209,6 +209,7 @@ export default function SkylineSwingerMobile() {
 
     // ---------- City ----------
     const buildings = [];
+    const enterables = []; // { doorPos: world Vector3 just outside a building's front door }
     function buildingColor() {
       const palette = [0x3a4a63, 0x4a5a73, 0x2f3d52, 0x5a6a83, 0x445a6b, 0x36445a];
       return palette[Math.floor(Math.random() * palette.length)];
@@ -232,6 +233,20 @@ export default function SkylineSwingerMobile() {
         b.receiveShadow = true;
         scene.add(b);
         buildings.push(b);
+
+        // A subset of solid (non-glass) buildings get a walk-in door on their
+        // south face, leading to a shared interior lobby (see "Building
+        // interiors" below).
+        if (!isGlass && h < 45 && Math.random() < 0.4 && enterables.length < 16) {
+          const doorW = 1.7, doorH = 2.7;
+          const doorMat = new THREE.MeshStandardMaterial({
+            color: 0x120c08, emissive: 0xffcf7a, emissiveIntensity: 0.55, roughness: 0.6
+          });
+          const door = new THREE.Mesh(new THREE.PlaneGeometry(doorW, doorH), doorMat);
+          door.position.set(b.position.x, doorH / 2 + 0.5, b.position.z - d / 2 - 0.03);
+          scene.add(door);
+          enterables.push({ doorPos: new THREE.Vector3(b.position.x, 0, b.position.z - d / 2 - 1.4) });
+        }
 
         const trim = new THREE.Mesh(
           new THREE.BoxGeometry(w * 1.02, 0.6, d * 1.02),
@@ -604,6 +619,97 @@ export default function SkylineSwingerMobile() {
       enemies.push(makeEnemy(b.position.x, b.position.z, topY, 'grunt'));
     }
 
+    // ---------- Building interiors ----------
+    // Every walk-in door leads to the same simple furnished lobby, parked far
+    // outside the playable city so outdoor collision/shadow logic never has
+    // to reason about it — entering/exiting is just teleporting the hero.
+    const INTERIOR_ORIGIN = new THREE.Vector3(4000, 0, 0);
+    const INTERIOR_SIZE = 26, INTERIOR_HEIGHT = 7;
+    const interiorGroup = new THREE.Group();
+    interiorGroup.position.copy(INTERIOR_ORIGIN);
+    const interiorFloorMat = new THREE.MeshStandardMaterial({ color: 0x394454, roughness: 0.85 });
+    // DoubleSide (not BackSide) so three.js flips the normal per gl_FrontFacing —
+    // BackSide alone renders the inward faces but keeps their outward-pointing
+    // normal, which reads as unlit/black from inside the room.
+    const interiorWallMat = new THREE.MeshStandardMaterial({ color: 0x232c3a, roughness: 0.9, side: THREE.DoubleSide });
+    const interiorFloor = new THREE.Mesh(new THREE.PlaneGeometry(INTERIOR_SIZE, INTERIOR_SIZE), interiorFloorMat);
+    interiorFloor.rotation.x = -Math.PI / 2;
+    interiorFloor.receiveShadow = true;
+    interiorGroup.add(interiorFloor);
+    const interiorShell = new THREE.Mesh(new THREE.BoxGeometry(INTERIOR_SIZE, INTERIOR_HEIGHT, INTERIOR_SIZE), interiorWallMat);
+    interiorShell.position.y = INTERIOR_HEIGHT / 2;
+    interiorGroup.add(interiorShell);
+    // decay 0 (no inverse-square falloff, just a hard cutoff at `distance`) —
+    // the physically-correct decay=2 default made these unreadably dim across
+    // a 26-unit room; a flat interior light reads better for this art style.
+    const lobbyLight1 = new THREE.PointLight(0xffdca8, 5, 32, 0);
+    lobbyLight1.position.set(0, INTERIOR_HEIGHT - 1, 0);
+    interiorGroup.add(lobbyLight1);
+    const lobbyLight2 = new THREE.PointLight(0x9fd2ff, 2.2, 26, 0);
+    lobbyLight2.position.set(6, INTERIOR_HEIGHT - 1.5, -6);
+    interiorGroup.add(lobbyLight2);
+    const interiorPropMat = new THREE.MeshStandardMaterial({ color: 0x4a5a73, roughness: 0.7 });
+    for (const [px, pz, pw, ph, pd] of [[-8, -8, 3, 1, 1.6], [8, -6, 2, 2.4, 2], [-6, 7, 4, 0.8, 1.2]]) {
+      const prop = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pd), interiorPropMat);
+      prop.position.set(px, ph / 2, pz);
+      prop.castShadow = true;
+      prop.receiveShadow = true;
+      interiorGroup.add(prop);
+    }
+    const exitDoorMat = new THREE.MeshStandardMaterial({ color: 0x120c08, emissive: 0xffcf7a, emissiveIntensity: 0.65 });
+    const exitDoor = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.8), exitDoorMat);
+    exitDoor.position.set(0, 1.5, INTERIOR_SIZE / 2 - 0.05);
+    exitDoor.rotation.y = Math.PI;
+    interiorGroup.add(exitDoor);
+    scene.add(interiorGroup);
+
+    // Spawn well clear of the exit trigger radius (2.2) — too close and the
+    // hero re-triggers the exit the instant doorCooldown expires, bouncing
+    // straight back outside without the player doing anything.
+    const INTERIOR_SPAWN = INTERIOR_ORIGIN.clone().add(new THREE.Vector3(0, 1.5, INTERIOR_SIZE / 2 - 8));
+    const INTERIOR_EXIT_TRIGGER = INTERIOR_ORIGIN.clone().add(new THREE.Vector3(0, 0, INTERIOR_SIZE / 2 - 1.5));
+    const INTERIOR_HALF_BOUNDS = INTERIOR_SIZE / 2 - 1;
+
+    let insideBuilding = null; // true once indoors, so movement/swing logic can branch
+    let lastOutsidePos = null;
+    let lastOutsideYaw = 0;
+    let doorCooldown = 0;
+
+    function enterBuilding() {
+      lastOutsidePos = hero.position.clone();
+      lastOutsideYaw = yaw;
+      insideBuilding = true;
+      isSwinging = false;
+      heroVelocity.set(0, 0, 0);
+      hero.position.copy(INTERIOR_SPAWN);
+      yaw = Math.PI;
+      doorCooldown = 1.0;
+      showMsg('Inside — find the glowing door to leave');
+      sfxRelease();
+    }
+    function exitBuilding() {
+      const exitPos = lastOutsidePos ? lastOutsidePos.clone() : new THREE.Vector3(0, 1.5, 0);
+      insideBuilding = null;
+      isSwinging = false;
+      heroVelocity.set(0, 0, 0);
+      hero.position.copy(exitPos);
+      yaw = lastOutsideYaw;
+      doorCooldown = 1.0;
+      showMsg('Back outside');
+      sfxRelease();
+    }
+    function updateBuildingEntry(dt) {
+      if (doorCooldown > 0) doorCooldown -= dt;
+      if (doorCooldown > 0) return;
+      if (!insideBuilding) {
+        for (const e of enterables) {
+          if (hero.position.distanceTo(e.doorPos) < 2.2) { enterBuilding(); break; }
+        }
+      } else if (hero.position.distanceTo(INTERIOR_EXIT_TRIGGER) < 2.2) {
+        exitBuilding();
+      }
+    }
+
     // ---------- Hero ----------
     const hero = new THREE.Group();
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0xd6273c, roughness: 0.55, metalness: 0.1 });
@@ -912,8 +1018,13 @@ export default function SkylineSwingerMobile() {
       onGroundPrev = onGround;
 
       if (moveX !== 0 || moveZ !== 0) hero.rotation.y = Math.atan2(moveX, moveZ);
-      hero.position.x = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.x));
-      hero.position.z = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.z));
+      if (insideBuilding) {
+        hero.position.x = Math.max(INTERIOR_ORIGIN.x - INTERIOR_HALF_BOUNDS, Math.min(INTERIOR_ORIGIN.x + INTERIOR_HALF_BOUNDS, hero.position.x));
+        hero.position.z = Math.max(INTERIOR_ORIGIN.z - INTERIOR_HALF_BOUNDS, Math.min(INTERIOR_ORIGIN.z + INTERIOR_HALF_BOUNDS, hero.position.z));
+      } else {
+        hero.position.x = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.x));
+        hero.position.z = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.z));
+      }
 
       // ---- procedural limb animation for a more lifelike, less static pose ----
       const horizSpeed = Math.hypot(heroVelocity.x, heroVelocity.z);
@@ -1223,7 +1334,7 @@ export default function SkylineSwingerMobile() {
       const t = clock.getElapsedTime();
       if (invincibleT > 0) invincibleT -= dt;
       if (attackCooldownT > 0) attackCooldownT -= dt;
-      if (webPressed && !isSwinging) startSwing();
+      if (webPressed && !isSwinging && !insideBuilding) startSwing();
       if (fightRequested) {
         fightRequested = false;
         if (attackCooldownT <= 0) {
@@ -1234,6 +1345,7 @@ export default function SkylineSwingerMobile() {
         }
       }
       updateHero(dt, t);
+      updateBuildingEntry(dt);
       updateEnemies(dt, t);
       updateProjectiles(dt);
       updateParticles(dt);
@@ -1405,7 +1517,7 @@ export default function SkylineSwingerMobile() {
             position: 'absolute', top: 10, left: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
             padding: '6px 12px', borderRadius: 10, fontSize: 12, lineHeight: 1.4
           }}>
-            Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost
+            Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Walk into a glowing doorway to go inside
           </div>
           <div style={{
             position: 'absolute', top: 10, right: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
