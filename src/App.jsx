@@ -20,6 +20,7 @@ export default function SkylineSwingerMobile() {
   const [health, setHealth] = useState(100);
   const [message, setMessage] = useState('');
   const [hitFlash, setHitFlash] = useState(false);
+  const [fatalError, setFatalError] = useState(null); // shown on screen so device-only bugs can be read off
   const [elevatorFloor, setElevatorFloor] = useState(null); // floor index while standing in an elevator
   const [indoors, setIndoorsUI] = useState(false);
 
@@ -59,6 +60,15 @@ export default function SkylineSwingerMobile() {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     mount.appendChild(renderer.domElement);
+    // surface GPU problems that otherwise only leave a black screen
+    renderer.debug.onShaderError = (gl, program, vs, fs) => {
+      const log = (gl.getShaderInfoLog(fs) || gl.getShaderInfoLog(vs) || gl.getProgramInfoLog(program) || '').slice(0, 300);
+      reportError('shader', new Error(log || 'shader failed to compile'));
+    };
+    renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      reportError('webgl', new Error('WebGL context lost (graphics chip gave up)'));
+    });
 
     // Gradient sky dome (vertex-colored) instead of a flat background color
     const skyGeo = new THREE.SphereGeometry(480, 24, 16);
@@ -1606,8 +1616,24 @@ export default function SkylineSwingerMobile() {
       heroShadow.material.opacity = Math.max(0.05, 0.5 - diff * 0.02);
     }
 
+    let errorShown = false;
+    function reportError(where, err) {
+      if (errorShown) return;
+      errorShown = true;
+      const msg = `${where}: ${err && err.message ? err.message : String(err)}`;
+      const stack = err && err.stack ? String(err.stack).split('\n').slice(0, 4).join('\n') : '';
+      console.error(msg, err);
+      setFatalError(`${msg}\n${stack}\n${navigator.userAgent}`);
+    }
     function animate() {
       animationId = requestAnimationFrame(animate);
+      try {
+        frame();
+      } catch (err) {
+        reportError('frame', err);
+      }
+    }
+    function frame() {
       const dt = Math.min(clock.getDelta(), 0.05);
       const t = clock.getElapsedTime();
       if (invincibleT > 0) invincibleT -= dt;
@@ -1918,6 +1944,16 @@ export default function SkylineSwingerMobile() {
                   {f + 1}
                 </div>
               ))}
+            </div>
+          )}
+
+          {fatalError && (
+            <div style={{
+              position: 'absolute', left: 10, right: 10, bottom: 130, zIndex: 50,
+              background: 'rgba(120,0,20,0.92)', color: '#fff', borderRadius: 10, padding: '10px 12px',
+              fontSize: 11, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text'
+            }}>
+              <b>Something went wrong — please send a photo of this to Claude:</b>{'\n'}{fatalError}
             </div>
           )}
 
