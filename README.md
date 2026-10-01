@@ -11,8 +11,12 @@ An original web-swinging 3D browser game (Three.js + React), built for touch con
   WEB / JUMP / FIGHT buttons
 - Patrolling robotic enemies ("Voltbots") with basic chase AI and melee combat
 - 40 collectible energy orbs
-- Walk-in building doors: some buildings have a glowing doorway leading to a
-  furnished interior lobby, with a matching door to head back outside
+- Walk-in buildings: 16 buildings have a glowing street door. Each is a hotel,
+  apartment block, shop or office with 3 floors (stairs + elevator with a
+  floor-button panel) and a top-floor door out to the building's real rooftop
+  (rooftop stair hut leads back in). Interior code lives in `src/interiors.js`.
+- Add `?debug` to the URL to expose a `window.__ss` test hook (teleport,
+  joystick, enter buildings) for testing from a desktop browser
 - Walk-cycle limb animation, camera bob, filmic tone mapping
 
 ## Stack

@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
+import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
 export default function SkylineSwingerMobile() {
   const mountRef = useRef(null);
@@ -10,12 +11,15 @@ export default function SkylineSwingerMobile() {
   const fightBtnRef = useRef(null);
   const speedFxRef = useRef(null);
   const audioCtxRef = useRef(null);
+  const elevatorGoRef = useRef(null);
+  const elevatorPanelRef = useRef(null);
   const [started, setStarted] = useState(false);
   const [score, setScore] = useState(0);
   const [defeated, setDefeated] = useState(0);
   const [health, setHealth] = useState(100);
   const [message, setMessage] = useState('');
   const [hitFlash, setHitFlash] = useState(false);
+  const [elevatorFloor, setElevatorFloor] = useState(null); // floor index while standing in an elevator
 
   const startGame = useCallback(() => {
     // Create/resume the AudioContext synchronously inside this click handler —
@@ -222,7 +226,8 @@ export default function SkylineSwingerMobile() {
 
     // ---------- City ----------
     const buildings = [];
-    const enterables = []; // { doorPos: world Vector3 just outside a building's front door }
+    // { type, doorPos, streetSpawn, hutDoorPos, roofSpawn } — buildings with a walk-in door
+    const enterables = [];
     function buildingColor() {
       const palette = [0x3a4a63, 0x4a5a73, 0x2f3d52, 0x5a6a83, 0x445a6b, 0x36445a];
       return palette[Math.floor(Math.random() * palette.length)];
@@ -257,9 +262,12 @@ export default function SkylineSwingerMobile() {
         buildings.push(b);
 
         // A subset of solid (non-glass) buildings get a walk-in door on their
-        // south face, leading to a shared interior lobby (see "Building
-        // interiors" below).
+        // -Z face leading to a 3-floor interior of one of the building types
+        // (see "Building interiors" below), plus a rooftop stair hut whose door
+        // connects to the top floor.
+        let enterable = false;
         if (!isGlass && h < 45 && Math.random() < 0.4 && enterables.length < 16) {
+          enterable = true;
           const doorW = 1.7, doorH = 2.7;
           const doorMat = new THREE.MeshStandardMaterial({
             color: 0x120c08, emissive: 0xffcf7a, emissiveIntensity: 0.55, roughness: 0.6
@@ -268,7 +276,23 @@ export default function SkylineSwingerMobile() {
           door.position.set(b.position.x, doorH / 2 + 0.5, b.position.z - d / 2 - 0.03);
           door.rotation.y = Math.PI; // PlaneGeometry faces +Z; turn it to face the street (-Z)
           scene.add(door);
-          enterables.push({ doorPos: new THREE.Vector3(b.position.x, 0, b.position.z - d / 2 - 1.4) });
+          const hutMat = new THREE.MeshStandardMaterial({ color: 0x4b525c, roughness: 0.85 });
+          const hut = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3, 2.6), hutMat);
+          const hutX = b.position.x + w / 2 - 1.6, hutZ = b.position.z + d / 2 - 1.6;
+          hut.position.set(hutX, h + 1.5, hutZ);
+          hut.castShadow = true;
+          scene.add(hut);
+          const hutDoor = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.3), doorMat);
+          hutDoor.position.set(hutX, h + 1.15, hutZ - 1.32);
+          hutDoor.rotation.y = Math.PI;
+          scene.add(hutDoor);
+          enterables.push({
+            type: BUILDING_TYPES[enterables.length % BUILDING_TYPES.length],
+            doorPos: new THREE.Vector3(b.position.x, 1.5, b.position.z - d / 2 - 1.4),
+            streetSpawn: new THREE.Vector3(b.position.x, 1.5, b.position.z - d / 2 - 4),
+            hutDoorPos: new THREE.Vector3(hutX, h + 1.5, hutZ - 2.1),
+            roofSpawn: new THREE.Vector3(hutX, h + 1.5, hutZ - 4.6),
+          });
         }
 
         const trim = new THREE.Mesh(
@@ -288,7 +312,7 @@ export default function SkylineSwingerMobile() {
         scene.add(base);
 
         // rooftop detail — antenna or water tank, breaks up the skyline silhouette
-        const roofRand = Math.random();
+        const roofRand = enterable ? 1 : Math.random(); // keep enterable roofs clear for the stair hut
         if (roofRand < 0.25) {
           const antenna = new THREE.Mesh(
             new THREE.CylinderGeometry(0.08, 0.1, 4 + Math.random() * 3, 6),
@@ -643,82 +667,80 @@ export default function SkylineSwingerMobile() {
     }
 
     // ---------- Building interiors ----------
-    // Every walk-in door leads to the same simple furnished lobby, parked far
-    // outside the playable city so outdoor collision/shadow logic never has
-    // to reason about it — entering/exiting is just teleporting the hero.
-    const INTERIOR_ORIGIN = new THREE.Vector3(4000, 0, 0);
-    const INTERIOR_SIZE = 26, INTERIOR_HEIGHT = 7;
-    const interiorGroup = new THREE.Group();
-    interiorGroup.position.copy(INTERIOR_ORIGIN);
-    const interiorFloorMat = new THREE.MeshStandardMaterial({ color: 0x394454, roughness: 0.85 });
-    // DoubleSide (not BackSide) so three.js flips the normal per gl_FrontFacing —
-    // BackSide alone renders the inward faces but keeps their outward-pointing
-    // normal, which reads as unlit/black from inside the room.
-    const interiorWallMat = new THREE.MeshStandardMaterial({ color: 0x232c3a, roughness: 0.9, side: THREE.DoubleSide });
-    const interiorFloor = new THREE.Mesh(new THREE.PlaneGeometry(INTERIOR_SIZE, INTERIOR_SIZE), interiorFloorMat);
-    interiorFloor.rotation.x = -Math.PI / 2;
-    interiorFloor.receiveShadow = true;
-    interiorGroup.add(interiorFloor);
-    const interiorShell = new THREE.Mesh(new THREE.BoxGeometry(INTERIOR_SIZE, INTERIOR_HEIGHT, INTERIOR_SIZE), interiorWallMat);
-    interiorShell.position.y = INTERIOR_HEIGHT / 2;
-    interiorGroup.add(interiorShell);
-    // decay 0 (no inverse-square falloff, just a hard cutoff at `distance`) —
-    // the physically-correct decay=2 default made these unreadably dim across
-    // a 26-unit room; a flat interior light reads better for this art style.
-    const lobbyLight1 = new THREE.PointLight(0xffdca8, 5, 32, 0);
-    lobbyLight1.position.set(0, INTERIOR_HEIGHT - 1, 0);
-    interiorGroup.add(lobbyLight1);
-    const lobbyLight2 = new THREE.PointLight(0x9fd2ff, 2.2, 26, 0);
-    lobbyLight2.position.set(6, INTERIOR_HEIGHT - 1.5, -6);
-    interiorGroup.add(lobbyLight2);
-    const interiorPropMat = new THREE.MeshStandardMaterial({ color: 0x4a5a73, roughness: 0.7 });
-    for (const [px, pz, pw, ph, pd] of [[-8, -8, 3, 1, 1.6], [8, -6, 2, 2.4, 2], [-6, 7, 4, 0.8, 1.2]]) {
-      const prop = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pd), interiorPropMat);
-      prop.position.set(px, ph / 2, pz);
-      prop.castShadow = true;
-      prop.receiveShadow = true;
-      interiorGroup.add(prop);
-    }
-    const exitDoorMat = new THREE.MeshStandardMaterial({ color: 0x120c08, emissive: 0xffcf7a, emissiveIntensity: 0.65 });
-    const exitDoor = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.8), exitDoorMat);
-    exitDoor.position.set(0, 1.5, INTERIOR_SIZE / 2 - 0.05);
-    exitDoor.rotation.y = Math.PI;
-    interiorGroup.add(exitDoor);
-    scene.add(interiorGroup);
+    // Four 3-floor interiors (one per building type) built by interiors.js and
+    // parked far outside the city; entering/exiting teleports the hero.
+    const interiors = createInteriors(THREE, scene);
+    // A fixed rig of interior lights that moves to whichever floor the hero is
+    // on. Keeping the light count constant avoids shader recompiles (a visible
+    // hitch on iPad) every time the hero goes in or out.
+    const interiorLights = [0, 1, 2].map(() => {
+      const l = new THREE.PointLight(0xffffff, 0, 24, 0);
+      l.position.set(4000, -500, 0);
+      scene.add(l);
+      return l;
+    });
+    const SUN_OUTSIDE = sun.intensity, HEMI_OUTSIDE = hemi.intensity;
 
-    // Spawn well clear of the exit trigger radius (2.2) — too close and the
-    // hero re-triggers the exit the instant doorCooldown expires, bouncing
-    // straight back outside without the player doing anything.
-    const INTERIOR_SPAWN = INTERIOR_ORIGIN.clone().add(new THREE.Vector3(0, 1.5, INTERIOR_SIZE / 2 - 8));
-    const INTERIOR_EXIT_TRIGGER = INTERIOR_ORIGIN.clone().add(new THREE.Vector3(0, 0, INTERIOR_SIZE / 2 - 1.5));
-    const INTERIOR_HALF_BOUNDS = INTERIOR_SIZE / 2 - 1;
-
-    let insideBuilding = null; // true once indoors, so movement/swing logic can branch
-    let lastOutsidePos = null;
-    let lastOutsideYaw = 0;
+    let insideBuilding = null; // the interior object while indoors, else null
+    let currentEnterable = null; // the city building the hero went into
+    let currentFloor = 0;
     let doorCooldown = 0;
+    let elevatorRide = null; // { target, t } while the elevator is moving
+    let elevatorShown = null; // floor shown on the elevator panel, or null when hidden
 
-    function enterBuilding() {
-      lastOutsidePos = hero.position.clone();
-      lastOutsideYaw = yaw;
-      insideBuilding = true;
+    function placeInteriorLights() {
+      const spots = insideBuilding.lightSpots(currentFloor);
+      interiorLights.forEach((l, i) => {
+        l.position.copy(spots[i]);
+        l.color.setHex(insideBuilding.lightColor);
+        l.intensity = i === 0 ? 2.6 : 2.0;
+      });
+    }
+    function setIndoors(interior) {
+      insideBuilding = interior;
+      sun.intensity = interior ? 0.15 : SUN_OUTSIDE;
+      hemi.intensity = interior ? 0.45 : HEMI_OUTSIDE;
+      if (interior) placeInteriorLights();
+      else interiorLights.forEach(l => { l.intensity = 0; l.position.set(4000, -500, 0); });
+    }
+    function floorMsg() {
+      return `${insideBuilding.label} · Floor ${currentFloor + 1}: ${insideBuilding.floorNames[currentFloor]}`;
+    }
+
+    function enterBuilding(ent, via) {
+      currentEnterable = ent;
+      const interior = interiors[ent.type];
       isSwinging = false;
       heroVelocity.set(0, 0, 0);
-      hero.position.copy(INTERIOR_SPAWN);
-      yaw = Math.PI;
+      if (via === 'roof') {
+        hero.position.copy(interior.roofSpawn);
+        yaw = interior.roofSpawnYaw;
+      } else {
+        hero.position.copy(interior.streetSpawn);
+        yaw = interior.streetSpawnYaw;
+      }
+      currentFloor = interior.floorAt(hero.position.y);
+      setIndoors(interior);
+      camInit = false;
       doorCooldown = 1.0;
-      showMsg('Inside — find the glowing door to leave');
+      showMsg(floorMsg(), 2500);
       sfxRelease();
     }
-    function exitBuilding() {
-      const exitPos = lastOutsidePos ? lastOutsidePos.clone() : new THREE.Vector3(0, 1.5, 0);
-      insideBuilding = null;
+    function exitBuilding(via) {
+      const ent = currentEnterable;
       isSwinging = false;
       heroVelocity.set(0, 0, 0);
-      hero.position.copy(exitPos);
-      yaw = lastOutsideYaw;
+      elevatorRide = null;
+      setIndoors(null);
+      if (ent) {
+        hero.position.copy(via === 'roof' ? ent.roofSpawn : ent.streetSpawn);
+      } else {
+        hero.position.set(0, 1.5, 0);
+      }
+      yaw = 0; // both exits face -Z, away from the door
+      camInit = false;
       doorCooldown = 1.0;
-      showMsg('Back outside');
+      showMsg(via === 'roof' ? 'Out on the roof!' : 'Back outside');
       sfxRelease();
     }
     function updateBuildingEntry(dt) {
@@ -726,11 +748,56 @@ export default function SkylineSwingerMobile() {
       if (doorCooldown > 0) return;
       if (!insideBuilding) {
         for (const e of enterables) {
-          if (hero.position.distanceTo(e.doorPos) < 2.2) { enterBuilding(); break; }
+          if (hero.position.distanceTo(e.doorPos) < 2.2) { enterBuilding(e, 'street'); break; }
+          if (hero.position.distanceTo(e.hutDoorPos) < 1.6) { enterBuilding(e, 'roof'); break; }
         }
-      } else if (hero.position.distanceTo(INTERIOR_EXIT_TRIGGER) < 2.2) {
-        exitBuilding();
+      } else if (hero.position.distanceTo(insideBuilding.streetExit) < 1.8) {
+        exitBuilding('street');
+      } else if (hero.position.distanceTo(insideBuilding.roofExit) < 1.8) {
+        exitBuilding('roof');
       }
+    }
+
+    function sfxDing() {
+      playTone({ freq: 1320, duration: 0.25, type: 'sine', gain: 0.12 });
+      playTone({ freq: 990, duration: 0.35, type: 'sine', gain: 0.1, delay: 0.18 });
+    }
+    elevatorGoRef.current = (target) => {
+      if (!insideBuilding || elevatorRide || target === currentFloor) return;
+      elevatorRide = { target, t: 1.1 };
+      showMsg(target > currentFloor ? 'Going up…' : 'Going down…');
+    };
+    function updateInterior(dt) {
+      if (!insideBuilding) {
+        if (elevatorShown !== null) { elevatorShown = null; setElevatorFloor(null); }
+        return;
+      }
+      if (elevatorRide) {
+        heroVelocity.set(0, 0, 0);
+        elevatorRide.t -= dt;
+        if (elevatorRide.t <= 0) {
+          hero.position.y += (elevatorRide.target - currentFloor) * FLOOR_H;
+          elevatorRide = null;
+          camInit = false;
+          sfxDing();
+        }
+      }
+      updateElevatorDoors(insideBuilding, hero.position, dt, !!elevatorRide);
+
+      const floor = insideBuilding.floorAt(hero.position.y);
+      if (floor !== currentFloor) {
+        currentFloor = floor;
+        placeInteriorLights();
+        showMsg(floorMsg(), 2500);
+      }
+      // safety net: fell out of the level somehow
+      if (hero.position.y < insideBuilding.origin.y - 10) {
+        hero.position.copy(insideBuilding.streetSpawn);
+        heroVelocity.set(0, 0, 0);
+      }
+
+      const show = insideBuilding.inElevator(hero.position) && !elevatorRide ? currentFloor : null;
+      if (show !== elevatorShown) { elevatorShown = show; setElevatorFloor(show); }
     }
 
     // ---------- Hero ----------
@@ -926,10 +993,10 @@ export default function SkylineSwingerMobile() {
     }
 
     let msgTimeout;
-    function showMsg(t) {
+    function showMsg(t, ms = 900) {
       setMessage(t);
       clearTimeout(msgTimeout);
-      msgTimeout = setTimeout(() => setMessage(''), 900);
+      msgTimeout = setTimeout(() => setMessage(''), ms);
     }
 
     function triggerShake(mag, dur) {
@@ -985,8 +1052,10 @@ export default function SkylineSwingerMobile() {
     }
 
     function updateHero(dt, t) {
-      const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw) * -1);
-      const right = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
+      // camera-relative: the camera sits at (sin yaw, cos yaw) behind the hero,
+      // so "forward" is the opposite of that offset
+      const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
 
       // smooth the raw joystick input so movement eases in/out instead of snapping
       const targetJoyX = joystick.active ? joystick.x : 0;
@@ -1032,7 +1101,8 @@ export default function SkylineSwingerMobile() {
       }
 
       const preLandVY = heroVelocity.y;
-      checkGround();
+      if (insideBuilding) onGround = collideInterior(insideBuilding, hero.position, heroVelocity);
+      else checkGround();
       if (onGround && !onGroundPrev && preLandVY < -13) {
         spawnBurst(hero.position.clone(), 0xcfc7b3, 8, { speed: 3, life: 0.4, gravity: -25, size: 0.7 });
         triggerShake(0.1, 0.15);
@@ -1041,10 +1111,7 @@ export default function SkylineSwingerMobile() {
       onGroundPrev = onGround;
 
       if (moveX !== 0 || moveZ !== 0) hero.rotation.y = Math.atan2(moveX, moveZ);
-      if (insideBuilding) {
-        hero.position.x = Math.max(INTERIOR_ORIGIN.x - INTERIOR_HALF_BOUNDS, Math.min(INTERIOR_ORIGIN.x + INTERIOR_HALF_BOUNDS, hero.position.x));
-        hero.position.z = Math.max(INTERIOR_ORIGIN.z - INTERIOR_HALF_BOUNDS, Math.min(INTERIOR_ORIGIN.z + INTERIOR_HALF_BOUNDS, hero.position.z));
-      } else {
+      if (!insideBuilding) {
         hero.position.x = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.x));
         hero.position.z = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.z));
       }
@@ -1098,8 +1165,9 @@ export default function SkylineSwingerMobile() {
       }
     }
 
+    const camRay = new THREE.Raycaster();
     function updateCamera(dt, t) {
-      const camDist = isSwinging ? 9 : 7;
+      const camDist = insideBuilding ? 5.5 : isSwinging ? 9 : 7;
       const offset = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch) + 0.35,
@@ -1138,6 +1206,15 @@ export default function SkylineSwingerMobile() {
         finalPos.y += (Math.random() - 0.5) * shakeMag;
         finalPos.z += (Math.random() - 0.5) * shakeMag;
         if (shakeT <= 0) shakeMag = 0;
+      }
+      if (insideBuilding) {
+        // keep the camera on the hero's side of walls, floors and ceilings
+        const toCam = finalPos.clone().sub(camLookAt);
+        const dist = toCam.length();
+        camRay.set(camLookAt, toCam.normalize());
+        camRay.far = dist;
+        const hit = camRay.intersectObjects(insideBuilding.camBlockers, false)[0];
+        if (hit) finalPos.copy(camLookAt).addScaledVector(toCam, Math.max(0.3, hit.distance - 0.35));
       }
       camera.position.copy(finalPos);
       camera.lookAt(camLookAt);
@@ -1197,6 +1274,7 @@ export default function SkylineSwingerMobile() {
         showMsg('Down! Recovering...');
         playerHealth = 100;
         setHealth(100);
+        if (insideBuilding) setIndoors(null);
         hero.position.set(0, 1.5, 0);
         heroVelocity.set(0, 0, 0);
         isSwinging = false;
@@ -1343,7 +1421,9 @@ export default function SkylineSwingerMobile() {
     }
 
     function updateHeroShadow() {
-      const groundY = getGroundHeightBelow(hero.position.x, hero.position.y, hero.position.z);
+      const groundY = insideBuilding
+        ? interiorGroundBelow(insideBuilding, hero.position.x, hero.position.y, hero.position.z)
+        : getGroundHeightBelow(hero.position.x, hero.position.y, hero.position.z);
       heroShadow.position.set(hero.position.x, groundY + 0.03, hero.position.z);
       const feetY = hero.position.y - 1.5;
       const diff = Math.max(0, feetY - groundY);
@@ -1369,6 +1449,7 @@ export default function SkylineSwingerMobile() {
       }
       updateHero(dt, t);
       updateBuildingEntry(dt);
+      updateInterior(dt);
       updateEnemies(dt, t);
       updateProjectiles(dt);
       updateParticles(dt);
@@ -1396,7 +1477,7 @@ export default function SkylineSwingerMobile() {
 
     function handleTouchStart(e) {
       for (const t of e.changedTouches) {
-        if (isInside(webBtnRef.current, t.clientX, t.clientY) || isInside(jumpBtnRef.current, t.clientX, t.clientY) || isInside(fightBtnRef.current, t.clientX, t.clientY)) {
+        if (isInside(webBtnRef.current, t.clientX, t.clientY) || isInside(jumpBtnRef.current, t.clientX, t.clientY) || isInside(fightBtnRef.current, t.clientX, t.clientY) || isInside(elevatorPanelRef.current, t.clientX, t.clientY)) {
           continue;
         }
         const rect = containerRef.current.getBoundingClientRect();
@@ -1497,6 +1578,18 @@ export default function SkylineSwingerMobile() {
     fightBtn.addEventListener('touchstart', onFightStart, { passive: true });
 
     window.addEventListener('resize', onResize);
+    if (import.meta.env.DEV || location.search.includes('debug')) {
+      // test hook for driving the game from a desktop browser (add ?debug to the URL)
+      window.__ss = {
+        hero, enterables, interiors, joystick,
+        enter: (i = 0, via = 'street') => enterBuilding(enterables[i], via),
+        setYaw: (v) => { yaw = v; }, setPitch: (v) => { pitch = v; },
+        jump: () => { jumpPressed = true; setTimeout(() => { jumpPressed = false; }, 100); },
+        get inside() { return insideBuilding && insideBuilding.type; },
+        get floor() { return currentFloor; },
+        get onGround() { return onGround; },
+      };
+    }
     animate();
 
     return () => {
@@ -1609,6 +1702,31 @@ export default function SkylineSwingerMobile() {
           }}>
             FIGHT
           </div>
+
+          {elevatorFloor !== null && (
+            <div ref={elevatorPanelRef} style={{
+              position: 'absolute', right: 20, top: '50%', transform: 'translateY(-50%)',
+              background: 'rgba(20,26,36,0.88)', border: '2px solid rgba(85,200,255,0.6)', borderRadius: 14,
+              padding: '10px 12px', color: '#fff', textAlign: 'center', userSelect: 'none'
+            }}>
+              <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 6 }}>ELEVATOR</div>
+              {[2, 1, 0].map(f => (
+                <div
+                  key={f}
+                  onPointerDown={(e) => { e.stopPropagation(); elevatorGoRef.current && elevatorGoRef.current(f); }}
+                  style={{
+                    width: 48, height: 48, margin: '6px auto', borderRadius: '50%',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 18, fontWeight: 'bold', cursor: 'pointer',
+                    background: f === elevatorFloor ? 'rgba(85,200,255,0.85)' : 'rgba(255,255,255,0.12)',
+                    border: '2px solid rgba(85,200,255,0.8)'
+                  }}
+                >
+                  {f + 1}
+                </div>
+              ))}
+            </div>
+          )}
 
           {message && (
             <div style={{
