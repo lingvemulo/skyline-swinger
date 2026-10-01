@@ -13,6 +13,7 @@ export default function SkylineSwingerMobile() {
   const audioCtxRef = useRef(null);
   const elevatorGoRef = useRef(null);
   const elevatorPanelRef = useRef(null);
+  const miniMapRef = useRef(null);
   const [started, setStarted] = useState(false);
   const [score, setScore] = useState(0);
   const [defeated, setDefeated] = useState(0);
@@ -20,6 +21,7 @@ export default function SkylineSwingerMobile() {
   const [message, setMessage] = useState('');
   const [hitFlash, setHitFlash] = useState(false);
   const [elevatorFloor, setElevatorFloor] = useState(null); // floor index while standing in an elevator
+  const [indoors, setIndoorsUI] = useState(false);
 
   const startGame = useCallback(() => {
     // Create/resume the AudioContext synchronously inside this click handler —
@@ -226,7 +228,7 @@ export default function SkylineSwingerMobile() {
 
     // ---------- City ----------
     const buildings = [];
-    // { type, doorPos, streetSpawn, hutDoorPos, roofSpawn } — buildings with a walk-in door
+    // { type, building, doorPos, streetSpawn, exitYaw, hutDoorPos, roofSpawn } — one per building
     const enterables = [];
     function buildingColor() {
       const palette = [0x3a4a63, 0x4a5a73, 0x2f3d52, 0x5a6a83, 0x445a6b, 0x36445a];
@@ -261,40 +263,6 @@ export default function SkylineSwingerMobile() {
         scene.add(b);
         buildings.push(b);
 
-        // A subset of solid (non-glass) buildings get a walk-in door on their
-        // -Z face leading to a 3-floor interior of one of the building types
-        // (see "Building interiors" below), plus a rooftop stair hut whose door
-        // connects to the top floor.
-        let enterable = false;
-        if (!isGlass && h < 45 && Math.random() < 0.4 && enterables.length < 16) {
-          enterable = true;
-          const doorW = 1.7, doorH = 2.7;
-          const doorMat = new THREE.MeshStandardMaterial({
-            color: 0x120c08, emissive: 0xffcf7a, emissiveIntensity: 0.55, roughness: 0.6
-          });
-          const door = new THREE.Mesh(new THREE.PlaneGeometry(doorW, doorH), doorMat);
-          door.position.set(b.position.x, doorH / 2 + 0.5, b.position.z - d / 2 - 0.03);
-          door.rotation.y = Math.PI; // PlaneGeometry faces +Z; turn it to face the street (-Z)
-          scene.add(door);
-          const hutMat = new THREE.MeshStandardMaterial({ color: 0x4b525c, roughness: 0.85 });
-          const hut = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3, 2.6), hutMat);
-          const hutX = b.position.x + w / 2 - 1.6, hutZ = b.position.z + d / 2 - 1.6;
-          hut.position.set(hutX, h + 1.5, hutZ);
-          hut.castShadow = true;
-          scene.add(hut);
-          const hutDoor = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.3), doorMat);
-          hutDoor.position.set(hutX, h + 1.15, hutZ - 1.32);
-          hutDoor.rotation.y = Math.PI;
-          scene.add(hutDoor);
-          enterables.push({
-            type: BUILDING_TYPES[enterables.length % BUILDING_TYPES.length],
-            doorPos: new THREE.Vector3(b.position.x, 1.5, b.position.z - d / 2 - 1.4),
-            streetSpawn: new THREE.Vector3(b.position.x, 1.5, b.position.z - d / 2 - 4),
-            hutDoorPos: new THREE.Vector3(hutX, h + 1.5, hutZ - 2.1),
-            roofSpawn: new THREE.Vector3(hutX, h + 1.5, hutZ - 4.6),
-          });
-        }
-
         const trim = new THREE.Mesh(
           new THREE.BoxGeometry(w * 1.02, 0.6, d * 1.02),
           new THREE.MeshStandardMaterial({ color: 0x1e2836, roughness: 0.6, metalness: 0.3 })
@@ -312,7 +280,8 @@ export default function SkylineSwingerMobile() {
         scene.add(base);
 
         // rooftop detail — antenna or water tank, breaks up the skyline silhouette
-        const roofRand = enterable ? 1 : Math.random(); // keep enterable roofs clear for the stair hut
+        // (the +x/+z roof corner is kept clear for the rooftop stair hut added below)
+        const roofRand = Math.random();
         if (roofRand < 0.25) {
           const antenna = new THREE.Mesh(
             new THREE.CylinderGeometry(0.08, 0.1, 4 + Math.random() * 3, 6),
@@ -329,17 +298,161 @@ export default function SkylineSwingerMobile() {
           const cone = new THREE.Mesh(new THREE.ConeGeometry(1.3, 0.8, 10), tankMat);
           cone.position.y = 2.5;
           tankGrp.add(cone);
-          tankGrp.position.set(b.position.x, h + 0.6, b.position.z);
+          tankGrp.position.set(b.position.x - w / 4, h + 0.6, b.position.z - d / 4);
           scene.add(tankGrp);
         } else if (roofRand < 0.6 && h > 30) {
           // setback tier — a smaller second tower stacked on top, common on real skyscrapers
-          const w2 = w * (0.4 + Math.random() * 0.3), d2 = d * (0.4 + Math.random() * 0.3), h2 = 6 + Math.random() * 14;
+          const w2 = Math.min(w * (0.4 + Math.random() * 0.3), w - 6.2);
+          const d2 = Math.min(d * (0.4 + Math.random() * 0.3), d - 6.2);
+          const h2 = 6 + Math.random() * 14;
           const tier = new THREE.Mesh(new THREE.BoxGeometry(w2, h2, d2), facadeMat);
           tier.position.set(b.position.x, h + h2 / 2, b.position.z);
           tier.castShadow = true;
           scene.add(tier);
         }
       }
+    }
+
+
+    // ---------- Building entrances ----------
+    // Every building gets a walk-in entrance on the side with the most open
+    // street in front of it, leading to a 3-floor interior of one of the
+    // building types (see "Building interiors" below), plus a rooftop stair
+    // hut whose door connects to the top floor. Each entrance part is one
+    // InstancedMesh across the whole city to keep draw calls low on iPad.
+    const TYPE_STYLE = {
+      hotel: { name: 'HOTEL', color: '#ffb347' },
+      apartment: { name: 'APARTMENTS', color: '#7bd389' },
+      shop: { name: 'SHOP', color: '#ff6b9a' },
+      office: { name: 'OFFICE', color: '#6bb7ff' },
+    };
+    const DIRS = [[0, 1], [0, -1], [1, 0], [-1, 0]]; // outward normals (x, z)
+    function openGap(b, nx, nz) {
+      const p = b.geometry.parameters;
+      const hw = p.width / 2, hd = p.depth / 2;
+      const face = nx ? b.position.x + nx * hw : b.position.z + nz * hd;
+      let gap = CITY_SIZE - Math.abs(face);
+      for (const o of buildings) {
+        if (o === b) continue;
+        const op = o.geometry.parameters;
+        const ohw = op.width / 2, ohd = op.depth / 2;
+        if (nx) {
+          if (Math.abs(o.position.z - b.position.z) > hd + ohd) continue; // not in this lane
+          const near = o.position.x - nx * ohw;
+          const g = (near - face) * nx;
+          if (g > -0.5 && g < gap) gap = Math.max(0, g);
+        } else {
+          if (Math.abs(o.position.x - b.position.x) > hw + ohw) continue;
+          const near = o.position.z - nz * ohd;
+          const g = (near - face) * nz;
+          if (g > -0.5 && g < gap) gap = Math.max(0, g);
+        }
+      }
+      return gap;
+    }
+    function makeSignTexture(text, color) {
+      const c = document.createElement('canvas');
+      c.width = 512; c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#141a24';
+      ctx.fillRect(0, 0, 512, 128);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 8;
+      ctx.strokeRect(6, 6, 500, 116);
+      ctx.fillStyle = color;
+      ctx.font = 'bold 70px -apple-system, Helvetica, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 256, 68);
+      return new THREE.CanvasTexture(c);
+    }
+    function makeGlowTexture() {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 128;
+      const ctx = c.getContext('2d');
+      const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+      g.addColorStop(0, 'rgba(255,214,140,0.85)');
+      g.addColorStop(1, 'rgba(255,214,140,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 128, 128);
+      return new THREE.CanvasTexture(c);
+    }
+    {
+      const entries = buildings.map((b) => {
+        const p = b.geometry.parameters;
+        let best = DIRS[0], bestGap = -1;
+        for (const dir of DIRS) {
+          const g = openGap(b, dir[0], dir[1]) + Math.random() * 0.5; // random tie-break
+          if (g > bestGap) { bestGap = g; best = dir; }
+        }
+        const [nx, nz] = best;
+        const face = new THREE.Vector3(
+          b.position.x + nx * p.width / 2, 0, b.position.z + nz * p.depth / 2
+        );
+        const type = BUILDING_TYPES[Math.floor(Math.random() * BUILDING_TYPES.length)];
+        const hutX = b.position.x + p.width / 2 - 1.6, hutZ = b.position.z + p.depth / 2 - 1.6;
+        enterables.push({
+          type,
+          building: b,
+          doorPos: new THREE.Vector3(face.x + nx * 0.8, 1.5, face.z + nz * 0.8),
+          streetSpawn: new THREE.Vector3(face.x + nx * 3.6, 1.5, face.z + nz * 3.6),
+          // camera looks along the street (parallel to the facade) so it isn't
+          // left inside the building behind the hero
+          exitYaw: Math.atan2(-nx, -nz) + (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2,
+          hutDoorPos: new THREE.Vector3(hutX, p.height + 1.5, hutZ - 2.1),
+          roofSpawn: new THREE.Vector3(hutX, p.height + 1.5, hutZ - 4.6),
+        });
+        return { face, rotY: Math.atan2(nx, nz), type, hutX, hutZ, top: p.height };
+      });
+
+      const m4 = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const up = new THREE.Vector3(0, 1, 0);
+      const one = new THREE.Vector3(1, 1, 1);
+      // place a part given in entrance-local coords (+z = out of the building)
+      function partMatrix(e, lx, ly, lz, rotX = 0) {
+        q.setFromAxisAngle(up, e.rotY);
+        if (rotX) q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rotX));
+        const off = new THREE.Vector3(lx, ly, lz).applyAxisAngle(up, e.rotY);
+        return m4.compose(off.add(e.face), q, one);
+      }
+      function instanced(geo, mat, list, place) {
+        const im = new THREE.InstancedMesh(geo, mat, list.length);
+        list.forEach((e, i) => im.setMatrixAt(i, place(e)));
+        im.instanceMatrix.needsUpdate = true;
+        im.frustumCulled = false; // instances span the whole city
+        scene.add(im);
+        return im;
+      }
+      const frameMat = new THREE.MeshStandardMaterial({ color: 0x1b2028, roughness: 0.5, metalness: 0.6 });
+      const glassDoorMat = new THREE.MeshBasicMaterial({ color: 0xffe4a8 });
+      instanced(new THREE.BoxGeometry(4.4, 3.8, 0.3), frameMat, entries, e => partMatrix(e, 0, 1.9, 0.15));
+      instanced(new THREE.PlaneGeometry(3.4, 3.1), glassDoorMat, entries, e => partMatrix(e, 0, 1.55, 0.32));
+      instanced(new THREE.BoxGeometry(0.1, 3.1, 0.06), frameMat, entries, e => partMatrix(e, 0, 1.55, 0.34));
+      const glowMat = new THREE.MeshBasicMaterial({
+        map: makeGlowTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+      });
+      instanced(new THREE.PlaneGeometry(7, 5), glowMat, entries, e => partMatrix(e, 0, 0.04, 2.2, -Math.PI / 2));
+      for (const type of BUILDING_TYPES) {
+        const list = entries.filter(e => e.type === type);
+        if (!list.length) continue;
+        const col = TYPE_STYLE[type].color;
+        const awningMat = new THREE.MeshStandardMaterial({
+          color: col, emissive: col, emissiveIntensity: 0.35, roughness: 0.6
+        });
+        instanced(new THREE.BoxGeometry(5.2, 0.25, 2.4), awningMat, list, e => partMatrix(e, 0, 4.0, 1.2));
+        const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(TYPE_STYLE[type].name, col) });
+        instanced(new THREE.PlaneGeometry(4.2, 1.05), signMat, list, e => partMatrix(e, 0, 4.9, 0.34));
+      }
+
+      // rooftop stair huts (door faces -z)
+      const hutMat = new THREE.MeshStandardMaterial({ color: 0x4b525c, roughness: 0.85 });
+      const hutDoorMat = new THREE.MeshBasicMaterial({ color: 0xffd68a });
+      const huts = instanced(new THREE.BoxGeometry(2.6, 3, 2.6), hutMat, entries,
+        e => m4.compose(new THREE.Vector3(e.hutX, e.top + 1.5, e.hutZ), q.identity(), one));
+      huts.castShadow = true;
+      instanced(new THREE.PlaneGeometry(1.4, 2.3), hutDoorMat, entries,
+        e => m4.compose(new THREE.Vector3(e.hutX, e.top + 1.15, e.hutZ - 1.32), q.setFromAxisAngle(up, Math.PI), one));
     }
 
     // Distant hazy skyline ring — sits just inside the fog's far distance so it
@@ -698,6 +811,7 @@ export default function SkylineSwingerMobile() {
     }
     function setIndoors(interior) {
       insideBuilding = interior;
+      setIndoorsUI(!!interior);
       sun.intensity = interior ? 0.15 : SUN_OUTSIDE;
       hemi.intensity = interior ? 0.45 : HEMI_OUTSIDE;
       if (interior) placeInteriorLights();
@@ -737,7 +851,7 @@ export default function SkylineSwingerMobile() {
       } else {
         hero.position.set(0, 1.5, 0);
       }
-      yaw = 0; // both exits face -Z, away from the door
+      yaw = ent && via !== 'roof' ? ent.exitYaw : 0; // face away from the door
       camInit = false;
       doorCooldown = 1.0;
       showMsg(via === 'roof' ? 'Out on the roof!' : 'Back outside');
@@ -1420,6 +1534,61 @@ export default function SkylineSwingerMobile() {
       }
     }
 
+    // ---------- Mini-map (heading-up: the way the camera faces is always "up") ----------
+    const MAP_PX = 120, MAP_RANGE = 70; // canvas size, world units from centre to edge
+    let mapTimer = 0;
+    function drawMiniMap(dt) {
+      mapTimer -= dt;
+      if (mapTimer > 0) return;
+      mapTimer = 0.1;
+      const canvas = miniMapRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const r = MAP_PX / 2, sc = r / MAP_RANGE;
+      ctx.clearRect(0, 0, MAP_PX, MAP_PX);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(r, r, r - 1, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(12,18,30,0.72)';
+      ctx.fillRect(0, 0, MAP_PX, MAP_PX);
+      ctx.translate(r, r);
+      ctx.scale(sc, sc);
+      ctx.rotate(yaw);
+      const hx = hero.position.x, hz = hero.position.z;
+      ctx.fillStyle = '#7d8796';
+      for (const b of buildings) {
+        const dx = b.position.x - hx, dz = b.position.z - hz;
+        if (Math.abs(dx) > MAP_RANGE * 1.5 || Math.abs(dz) > MAP_RANGE * 1.5) continue;
+        const p = b.geometry.parameters;
+        ctx.fillRect(dx - p.width / 2, dz - p.depth / 2, p.width, p.depth);
+      }
+      ctx.restore();
+      // door dots drawn in screen space so they stay a constant size
+      const cy = Math.cos(yaw), sy = Math.sin(yaw);
+      for (const e of enterables) {
+        const dx = e.doorPos.x - hx, dz = e.doorPos.z - hz;
+        if (Math.abs(dx) > MAP_RANGE * 1.5 || Math.abs(dz) > MAP_RANGE * 1.5) continue;
+        const px = r + (dx * cy - dz * sy) * sc, py = r + (dx * sy + dz * cy) * sc;
+        if ((px - r) ** 2 + (py - r) ** 2 > (r - 4) ** 2) continue;
+        ctx.fillStyle = TYPE_STYLE[e.type].color;
+        ctx.beginPath();
+        ctx.arc(px, py, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // the hero, pointing up
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(r, r - 7); ctx.lineTo(r + 5, r + 5); ctx.lineTo(r, r + 2); ctx.lineTo(r - 5, r + 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(r, r, r - 1, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
     function updateHeroShadow() {
       const groundY = insideBuilding
         ? interiorGroundBelow(insideBuilding, hero.position.x, hero.position.y, hero.position.z)
@@ -1460,6 +1629,7 @@ export default function SkylineSwingerMobile() {
       updateWebLine();
       updateOrbs(dt, t);
       updateHeroShadow();
+      if (!insideBuilding) drawMiniMap(dt);
       if (fightBtnRef.current) fightBtnRef.current.style.opacity = attackCooldownT > 0 ? '0.45' : '1';
       if (speedFxRef.current) {
         const horizSpeed = Math.hypot(heroVelocity.x, heroVelocity.z);
@@ -1641,6 +1811,23 @@ export default function SkylineSwingerMobile() {
           }}>
             <div>Orbs: {score}</div>
             <div>Voltbots: {defeated}</div>
+          </div>
+
+          {/* Mini-map + legend */}
+          <div style={{
+            position: 'absolute', top: 66, right: 10, pointerEvents: 'none',
+            display: indoors ? 'none' : 'flex', flexDirection: 'column', alignItems: 'center'
+          }}>
+            <canvas ref={miniMapRef} width={120} height={120} style={{ width: 120, height: 120 }} />
+            <div style={{
+              marginTop: 4, padding: '3px 6px', borderRadius: 8, background: 'rgba(0,0,0,0.4)',
+              display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, rowGap: 1,
+              fontSize: 9, color: '#fff'
+            }}>
+              {[['Hotel', '#ffb347'], ['Apartments', '#7bd389'], ['Shop', '#ff6b9a'], ['Office', '#6bb7ff']].map(([n, c]) => (
+                <span key={n}><span style={{ color: c }}>●</span> {n}</span>
+              ))}
+            </div>
           </div>
 
           {/* Health bar */}
