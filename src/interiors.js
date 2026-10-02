@@ -131,6 +131,15 @@ const PARTITIONS = {
   ],
 };
 
+// Doorways in the partitions that get a hinged door: [floor, wallZ or wallX,
+// 'z' (wall runs along x at z = c) or 'x' (wall runs along z at x = c), from, to].
+const DOORWAYS = {
+  hotel: [[1, -4, 'z', -2.5, -1.3], [1, -4, 'z', 3.3, 4.5], [1, 3, 'z', -5.4, -4.2], [1, 3, 'z', 0.9, 2.1], [1, 3, 'z', 8, 9.2]],
+  apartment: [[1, 3, 'z', -3, -1.6], [1, 3, 'z', 7, 8.4], [1, -5, 'z', -1, 0.4], [2, 3, 'z', 6, 7.4]],
+  shop: [[2, 3, 'x', 4, 5.4]],
+  office: [[1, 3, 'z', 8, 9.4], [2, -4, 'z', 0, 1.4]],
+};
+
 // Stairwell: two switchback flights along the west wall.
 const LANE_A = [-12.85, -10.25]; // floor 1 -> 2, climbing north (-z)
 const LANE_B = [-10.1, -7.6];    // floor 2 -> 3, climbing south (+z)
@@ -313,12 +322,45 @@ function buildInterior(THREE, scene, type, origin) {
   roofSign.rotation.y = -Math.PI / 2;
   group.add(roofSign);
 
-  furnish(THREE, {
+  // hinged room doors (not solid — they swing open as the hero walks up)
+  const doorMat = new THREE.MeshStandardMaterial({ color: 0x8a6440, roughness: 0.6 });
+  const swings = [];
+  for (const [k, c, axis, a, b] of DOORWAYS[type]) {
+    const pivot = new THREE.Group();
+    const w = b - a;
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(w, 2.9, 0.08), doorMat);
+    leaf.position.set(w / 2, 1.45, 0);
+    leaf.userData.keep = true;
+    pivot.add(leaf);
+    if (axis === 'z') pivot.position.set(a, k * FLOOR_H, c);
+    else { pivot.position.set(c, k * FLOOR_H, a); pivot.rotation.y = -Math.PI / 2; }
+    pivot.userData.baseRot = pivot.rotation.y;
+    group.add(pivot);
+    swings.push({ pivot, open: 0, max: 1.5, floor: k });
+  }
+  // a light switch beside the elevator on every floor
+  const uses = [];
+  const plateMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f0, roughness: 0.4 });
+  for (let k = 0; k < 3; k++) {
+    const sw = new THREE.Group();
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.42, 0.04), plateMat);
+    const nub = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.06), new THREE.MeshBasicMaterial({ color: 0xffcc33 }));
+    nub.position.z = 0.03;
+    plate.userData.keep = nub.userData.keep = true;
+    sw.add(plate, nub);
+    sw.position.set(9.15, k * FLOOR_H + 1.7, ELEV.z1 + 0.13);
+    group.add(sw);
+    uses.push({ kind: 'switch', obj: sw, floor: k });
+  }
+
+  const furn = furnish(THREE, {
     group, solids, FLOOR_H, CEIL, type,
     partitions: PARTITIONS[type],
     tex: (name) => loadTex(THREE, name),
     label: (text, bg, fg) => makeLabelTexture(THREE, text, { bg, fg, w: 512, h: 128 }),
   });
+  for (const sw of furn.swings) { sw.pivot.userData.baseRot = sw.pivot.rotation.y; swings.push(sw); }
+  uses.push(...furn.uses);
   bakeStatic(THREE, group, camBlockers);
   group.visible = false; // App shows only the interior the hero is in
   scene.add(group);
@@ -334,6 +376,11 @@ function buildInterior(THREE, scene, type, origin) {
     solids,
     camBlockers,
     elevatorDoors,
+    swings, uses,
+    ceilingMat: furn.ceilingMat,
+    tvMat: furn.tvMat,
+    lightsOn: true,
+    tvsOn: true,
     // hero positions (already +1.5 above feet) and facing (yaw)
     streetSpawn: at(0, 1.5, 8.5), streetSpawnYaw: 0,
     streetExit: at(0, 1.5, 11.6),

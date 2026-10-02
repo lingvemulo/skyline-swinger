@@ -23,6 +23,10 @@ An original web-swinging 3D browser game (Three.js + React), built for touch con
   shop shelves and fridges, bar, meeting room etc., photo-textured floors and
   walls, ceiling lights, and windows with a city view. Static parts are merged
   per material at load so each building is only a few dozen draw calls.
+- Inside buildings: people (receptionists, shoppers, office workers, bar
+  staff), 6 orbs and 3 Voltbots per building (remembered per building), room
+  doors and fridges that swing open as you approach, and USE (the WEB button
+  indoors, or E) for light switches and TVs.
 - Add `?debug` to the URL to expose a `window.__ss` test hook (teleport,
   joystick, enter buildings) for testing from a desktop browser
 - Human hero (`src/hero.js`) with knees/elbows, removable mask and a wardrobe

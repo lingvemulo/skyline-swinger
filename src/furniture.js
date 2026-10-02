@@ -150,11 +150,12 @@ export function furnish(THREE, api) {
     pot: std({ color: 0xb5653a, roughness: 0.9 }),
     lampShade: new THREE.MeshBasicMaterial({ color: 0xfff0c8 }),
     ceilingLight: new THREE.MeshBasicMaterial({ color: 0xfffaf0 }),
-    glassFront: new THREE.MeshBasicMaterial({ map: fridgeTex(THREE) }),
+    glassFront: new THREE.MeshBasicMaterial({ map: fridgeTex(THREE), side: THREE.DoubleSide }),
     products: std({ map: productsTex(THREE), roughness: 0.6 }),
     books: std({ map: booksTex(THREE), roughness: 0.8 }),
     tvScreen: new THREE.MeshBasicMaterial({ map: screenTex(THREE, 'tv') }),
     pcScreen: new THREE.MeshBasicMaterial({ map: screenTex(THREE, 'pc') }),
+    fridgeBack: new THREE.MeshBasicMaterial({ map: fridgeTex(THREE) }),
     tiles: texMat('interior_tiles', 1.6),
     pingpong: std({ color: 0x1f6e4a, roughness: 0.5 }),
     locker: std({ color: 0x4a6fa5, roughness: 0.4, metalness: 0.4 }),
@@ -164,6 +165,20 @@ export function furnish(THREE, api) {
     view: new THREE.MeshBasicMaterial({ map: skylineTex(THREE) }),
     water: std({ color: 0x7fc4ff, roughness: 0.1, transparent: true, opacity: 0.8 }),
   };
+  // things the hero can interact with, returned to interiors.js
+  const swings = [];   // hinged doors that open as the hero approaches: { pivot, open, max }
+  const uses = [];     // things to USE: { kind: 'tv', obj }
+  // a hinged panel: pivot at x = hingeX (metres, local), panel extends +x by width
+  function hinged(width, height, mat, hingeX, y, z, sign = 1) {
+    const pivot = new THREE.Group();
+    pivot.position.set(hingeX * S, 0, z * S);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(width * S, height * S, 0.04 * S), mat);
+    panel.position.set(width / 2 * S, y * S, 0);
+    panel.userData.keep = true;
+    pivot.add(panel);
+    pivot.userData.swing = { max: 1.6 * sign };
+    return pivot;
+  }
   const blanketMats = [0x3d5a80, 0x9b2c2c, 0x6a994e, 0xc9a227, 0x7b5ea7].map(c => std({ color: c, roughness: 0.9 }));
   const chairMats = [M.sofaBlue, M.sofaGrey, M.sofaRed, M.black];
 
@@ -211,6 +226,8 @@ export function furnish(THREE, api) {
     g.position.set(x, k * FLOOR_H, z);
     g.rotation.y = rot;
     group.add(g);
+    g.traverse(o => { if (o.userData.swing) swings.push({ pivot: o, open: 0, max: o.userData.swing.max, floor: k }); });
+    if (parts.some(p => p.material === M.tvScreen)) uses.push({ kind: 'tv', obj: g, floor: k });
     if (solid) {
       group.updateMatrixWorld(true);
       solids.push(new THREE.Box3().setFromObject(g));
@@ -275,7 +292,11 @@ export function furnish(THREE, api) {
     back.rotation.y = Math.PI;
     return [B(len, h, 0.9, M.white, 0, h / 2, 0), Pl(len - 0.06, h - 0.08, mat, 0, h / 2, 0.451), back];
   };
-  const fridge = (len = 2) => [B(len, 2.0, 0.75, M.white, 0, 1.0, 0), Pl(len - 0.12, 1.75, M.glassFront, 0, 1.02, 0.376)];
+  const fridge = (len = 2) => [
+    B(len, 2.0, 0.75, M.white, 0, 1.0, 0),
+    Pl(len - 0.12, 1.75, M.fridgeBack, 0, 1.02, 0.379),
+    hinged(len - 0.12, 1.75, M.glassFront, -(len - 0.12) / 2, 1.02, 0.405),
+  ];
   const counter = (len, d = 0.62, h = 0.95, body = M.wood, top = M.stone) => [
     B(len, h - 0.04, d, body, 0, (h - 0.04) / 2, 0),
     B(len + 0.04, 0.04, d + 0.04, top, 0, h - 0.02, 0),
@@ -287,7 +308,8 @@ export function furnish(THREE, api) {
     B(0.6, 0.02, 0.5, M.black, -len / 2 + 1.0, 0.93, 0),     // hob
     B(0.5, 0.03, 0.38, M.metal, len / 2 - 1.4, 0.92, 0),     // sink
     C(0.015, 0.015, 0.3, M.metal, len / 2 - 1.4, 1.07, -0.22),
-    B(0.75, 1.95, 0.68, M.metal, len / 2 + 0.4, 0.975, 0),   // fridge
+    B(0.75, 1.95, 0.6, M.metal, len / 2 + 0.4, 0.975, -0.04), // fridge body
+    hinged(0.75, 1.92, M.metal, len / 2 + 0.025, 0.975, 0.28), // fridge door
   ];
   const tvUnit = () => [
     B(1.6, 0.45, 0.42, M.darkWood, 0, 0.225, 0),
@@ -522,4 +544,6 @@ export function furnish(THREE, api) {
     add(counter(2, 0.62, 0.92, M.white, M.stone), 9, 2, So(0.62), ROT.S);
     add(plant(), 11.7, 2, -4);
   }
+
+  return { swings, uses, ceilingMat: M.ceilingLight, tvMat: M.tvScreen };
 }

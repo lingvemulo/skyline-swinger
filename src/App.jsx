@@ -41,6 +41,7 @@ export default function SkylineSwingerMobile() {
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
   const [bossHud, setBossHud] = useState(null);
   const [danger, setDanger] = useState(false);
+  const [useHint, setUseHint] = useState(null); // e.g. 'Lights off' when standing by a switch
   const dodgeRef = useRef(null);
   const dodgeBtnRef = useRef(null);
   const saveRef = useRef(save);
@@ -851,6 +852,7 @@ export default function SkylineSwingerMobile() {
         const legGeoH = new THREE.CylinderGeometry(0.22, 0.19, 0.75, 6);
         const legLH = new THREE.Mesh(legGeoH, bodyMat2); legLH.position.set(-0.26, 0.38, 0); legLH.castShadow = true; grp.add(legLH);
         const legRH = new THREE.Mesh(legGeoH, bodyMat2); legRH.position.set(0.26, 0.38, 0); legRH.castShadow = true; grp.add(legRH);
+        for (const c of grp.children) c.position.y -= 1.85; // feet on the ground
         grp.position.set(x, groundY + 1.85, z);
         health = 110; speed = 1.9; dmg = 16; attackRange = 2.0;
       } else if (type === 'flyer') {
@@ -879,6 +881,7 @@ export default function SkylineSwingerMobile() {
         const legGeo2 = new THREE.CylinderGeometry(0.15, 0.13, 0.55, 6);
         const legL2 = new THREE.Mesh(legGeo2, bodyMat2); legL2.position.set(-0.18, 0.28, 0); legL2.castShadow = true; grp.add(legL2);
         const legR2 = new THREE.Mesh(legGeo2, bodyMat2); legR2.position.set(0.18, 0.28, 0); legR2.castShadow = true; grp.add(legR2);
+        for (const c of grp.children) c.position.y -= 1.3; // feet on the ground
         grp.position.set(x, groundY + 1.3, z);
         health = 40; speed = 3 + Math.random() * 1.5; dmg = 8; attackRange = 1.6;
       }
@@ -938,6 +941,117 @@ export default function SkylineSwingerMobile() {
     // Four 3-floor interiors (one per building type) built by interiors.js and
     // parked far outside the city; entering/exiting teleports the hero.
     const interiors = createInteriors(THREE, scene);
+
+    // People inside: [floor, x, z, mode, facing or walk-to [x, z]] per building type.
+    // 'sit' lowers them onto a seat; 'walk' paces back and forth.
+    const PEOPLE = {
+      hotel: [[0, 1.5, -10.4, 'stand', 0], [0, -6, -4, 'walk', [6, -4]], [0, -3.6, 1.1, 'sit', 0], [1, -5, -0.5, 'walk', [7, -0.5]],
+        [2, 1.5, -10.9, 'stand', 0], [2, 1.5, -8.0, 'sit', Math.PI], [2, -3.6, 1.9, 'sit', 0]],
+      apartment: [[0, 0, -11.2, 'stand', Math.PI], [0, 5.5, 5.6, 'sit', Math.PI / 2], [1, -5, -1, 'walk', [7, -1]], [2, -1.2, -10.8, 'stand', Math.PI]],
+      shop: [[0, 4.4, 6.2, 'stand', 0], [0, 7.6, 6.2, 'stand', 0], [0, -3.3, -6, 'walk', [-3.3, -1]], [0, 3.8, -6, 'walk', [3.8, -1]],
+        [0, 10.4, 1, 'stand', Math.PI / 2], [1, -2, -7, 'walk', [4, -7]], [2, -2.56, -4, 'sit', 0]],
+      office: [[0, 2, -8.2, 'stand', 0], [0, -4.6, 3, 'sit', Math.PI / 2], [1, -3.3, -11.4, 'sit', Math.PI], [1, 0.9, -11.4, 'sit', Math.PI],
+        [1, 5.1, -11.4, 'sit', Math.PI], [1, -5, 1, 'walk', [6, 1]], [2, -1.2, -10.4, 'sit', 0], [2, 2, -10.4, 'sit', 0],
+        [2, 0.4, -6.8, 'sit', Math.PI], [2, 5.6, 4.3, 'stand', 0], [2, 5.6, 9.7, 'stand', Math.PI]],
+    };
+    const indoorPeople = [];
+    for (const [type, list] of Object.entries(PEOPLE)) {
+      const it = interiors[type];
+      for (const [k, x, z, mode, arg] of list) {
+        const p = makePedestrian();
+        p.grp.scale.setScalar(1.4); // match the hero's size
+        const y = k * FLOOR_H;
+        p.grp.position.set(x, y + (mode === 'sit' ? -0.38 : 0), z);
+        if (mode === 'sit') {
+          p.hipL.rotation.x = p.hipR.rotation.x = -1.45;
+          p.shoulderL.rotation.x = p.shoulderR.rotation.x = -0.4;
+        }
+        if (mode === 'walk') p.grp.lookAt(arg[0], p.grp.position.y, arg[1]);
+        else p.grp.rotation.y = arg;
+        it.group.add(p.grp); // shown/hidden with its building
+        indoorPeople.push({ ...p, mode, from: new THREE.Vector3(x, y, z), to: mode === 'walk' ? new THREE.Vector3(arg[0], y, arg[1]) : null, leg: 1, phase: Math.random() * 6 });
+      }
+    }
+    function updateIndoorPeople(dt, t) {
+      for (const p of indoorPeople) {
+        if (!p.grp.parent.visible) continue;
+        if (p.mode === 'walk') {
+          const target = p.leg ? p.to : p.from;
+          const dir = new THREE.Vector3().subVectors(target, p.grp.position);
+          dir.y = 0;
+          if (dir.length() < 0.3) { p.leg = 1 - p.leg; continue; }
+          dir.normalize();
+          p.grp.position.addScaledVector(dir, 1.6 * dt);
+          p.grp.lookAt(target.x, p.grp.position.y, target.z);
+          const sw = Math.sin(t * 7 + p.phase) * 0.5;
+          p.hipL.rotation.x = sw; p.hipR.rotation.x = -sw;
+          p.shoulderL.rotation.x = -sw * 0.7; p.shoulderR.rotation.x = sw * 0.7;
+        } else if (p.mode === 'stand') {
+          // idle: weight shift and the odd arm gesture
+          p.grp.rotation.z = Math.sin(t * 1.3 + p.phase) * 0.03;
+          p.shoulderR.rotation.x = Math.max(0, Math.sin(t * 0.7 + p.phase)) * -0.6;
+        }
+      }
+    }
+
+    // Orbs and Voltbots inside: the same spots in every building of a type,
+    // but collected orbs / beaten Voltbots are remembered per building.
+    const INDOOR_ORBS = [[0, -4, 8], [0, 6, -3], [1, 0, -0.5], [1, -6, -10], [2, 5, -1], [2, -3, -11]];
+    const INDOOR_BOTS = [[0, 4, -1.5], [1, 3, 0], [2, -1, 3]];
+    const buildingProgress = new Map(); // enterable -> { orbs: Set, bots: Set }
+    let indoorOrbs = [];
+    let indoorBots = [];
+    function populateInterior(ent, interior) {
+      if (!buildingProgress.has(ent)) buildingProgress.set(ent, { orbs: new Set(), bots: new Set() });
+      const prog = buildingProgress.get(ent);
+      const o = interior.origin;
+      INDOOR_ORBS.forEach(([k, x, z], i) => {
+        if (prog.orbs.has(i)) return;
+        const orb = new THREE.Mesh(orbGeo, orbMat);
+        orb.position.set(o.x + x, k * FLOOR_H + 2.6, o.z + z);
+        orb.userData = { baseY: orb.position.y - 0.5, phase: Math.random() * 6, indoorIdx: i };
+        scene.add(orb);
+        orbs.push(orb);
+        indoorOrbs.push(orb);
+      });
+      INDOOR_BOTS.forEach(([k, x, z], i) => {
+        if (prog.bots.has(i)) return;
+        const en = makeEnemy(o.x + x, o.z + z, k * FLOOR_H, 'grunt');
+        en.indoor = { interior, idx: i, floor: k };
+        enemies.push(en);
+        indoorBots.push(en);
+      });
+    }
+    function clearInterior(ent) {
+      const prog = ent && buildingProgress.get(ent);
+      for (const orb of indoorOrbs) {
+        if (orbs.includes(orb)) { scene.remove(orb); orbs.splice(orbs.indexOf(orb), 1); }
+        else if (prog) prog.orbs.add(orb.userData.indoorIdx);
+      }
+      for (const en of indoorBots) {
+        if (!en.alive && prog) prog.bots.add(en.indoor.idx);
+        scene.remove(en.mesh);
+        const i = enemies.indexOf(en);
+        if (i >= 0) enemies.splice(i, 1);
+      }
+      indoorOrbs = [];
+      indoorBots = [];
+    }
+    const tmpPos = new THREE.Vector3(), zeroVel = new THREE.Vector3();
+    // keep indoor Voltbots out of walls/furniture; they only wake up on the hero's floor
+    function indoorBotActive(en) {
+      if (!en.indoor) return true;
+      return insideBuilding === en.indoor.interior && currentFloor === en.indoor.floor;
+    }
+    function constrainIndoorBot(en) {
+      tmpPos.set(en.mesh.position.x, en.groundY + 1.5, en.mesh.position.z);
+      zeroVel.set(0, 0, 0);
+      collideInterior(en.indoor.interior, tmpPos, zeroVel);
+      en.mesh.position.x = tmpPos.x;
+      en.mesh.position.z = tmpPos.z;
+    }
+    let useRequested = false;
+    let useShown = null;
     // A fixed rig of interior lights that moves to whichever floor the hero is
     // on. Keeping the light count constant avoids shader recompiles (a visible
     // hitch on iPad) every time the hero goes in or out.
@@ -961,7 +1075,7 @@ export default function SkylineSwingerMobile() {
       interiorLights.forEach((l, i) => {
         l.position.copy(spots[i]);
         l.color.setHex(insideBuilding.lightColor);
-        l.intensity = i === 0 ? 2.6 : 2.0;
+        l.intensity = (i === 0 ? 2.6 : 2.0) * (insideBuilding.lightsOn ? 1 : 0.08);
       });
     }
     function setIndoors(interior) {
@@ -978,8 +1092,10 @@ export default function SkylineSwingerMobile() {
     }
 
     function enterBuilding(ent, via) {
+      clearInterior(currentEnterable);
       currentEnterable = ent;
       const interior = interiors[ent.type];
+      populateInterior(ent, interior);
       isSwinging = false;
       heroVelocity.set(0, 0, 0);
       if (via === 'roof') {
@@ -1001,6 +1117,7 @@ export default function SkylineSwingerMobile() {
       isSwinging = false;
       heroVelocity.set(0, 0, 0);
       elevatorRide = null;
+      clearInterior(ent);
       setIndoors(null);
       if (ent) {
         hero.position.copy(via === 'roof' ? ent.roofSpawn : ent.streetSpawn);
@@ -1040,6 +1157,8 @@ export default function SkylineSwingerMobile() {
     function updateInterior(dt) {
       if (!insideBuilding) {
         if (elevatorShown !== null) { elevatorShown = null; setElevatorFloor(null); }
+        if (useShown !== null) { useShown = null; setUseHint(null); }
+        useRequested = false;
         return;
       }
       if (elevatorRide) {
@@ -1053,6 +1172,38 @@ export default function SkylineSwingerMobile() {
         }
       }
       updateElevatorDoors(insideBuilding, hero.position, dt, !!elevatorRide);
+
+      // doors and fridge doors swing open as the hero walks up
+      for (const sw of insideBuilding.swings) {
+        if (!sw.worldPos) { sw.worldPos = new THREE.Vector3(); sw.pivot.getWorldPosition(sw.worldPos); }
+        const near = sw.floor === currentFloor &&
+          Math.hypot(hero.position.x - sw.worldPos.x, hero.position.z - sw.worldPos.z) < 3;
+        sw.open += ((near ? 1 : 0) - sw.open) * Math.min(1, dt * 5);
+        sw.pivot.rotation.y = sw.pivot.userData.baseRot - sw.open * sw.max;
+      }
+      // nearest thing to USE (light switch / TV)
+      let nearest = null, nd = 2.6;
+      for (const u of insideBuilding.uses) {
+        if (u.floor !== currentFloor) continue;
+        if (!u.worldPos) { u.worldPos = new THREE.Vector3(); u.obj.getWorldPosition(u.worldPos); }
+        const d = Math.hypot(hero.position.x - u.worldPos.x, hero.position.z - u.worldPos.z);
+        if (d < nd) { nd = d; nearest = u; }
+      }
+      const hint = nearest ? (nearest.kind === 'switch' ? (insideBuilding.lightsOn ? 'Lights off' : 'Lights on') : (insideBuilding.tvsOn ? 'TV off' : 'TV on')) : null;
+      if (hint !== useShown) { useShown = hint; setUseHint(hint); }
+      if (useRequested) {
+        useRequested = false;
+        if (nearest && nearest.kind === 'switch') {
+          insideBuilding.lightsOn = !insideBuilding.lightsOn;
+          insideBuilding.ceilingMat.color.setHex(insideBuilding.lightsOn ? 0xfffaf0 : 0x2a2a2a);
+          placeInteriorLights();
+          playTone({ freq: 1800, duration: 0.04, type: 'square', gain: 0.08 });
+        } else if (nearest && nearest.kind === 'tv') {
+          insideBuilding.tvsOn = !insideBuilding.tvsOn;
+          insideBuilding.tvMat.color.setHex(insideBuilding.tvsOn ? 0xffffff : 0x050505);
+          playTone({ freq: 240, freqEnd: 900, duration: 0.15, type: 'sine', gain: 0.08 });
+        }
+      }
 
       const floor = insideBuilding.floorAt(hero.position.y);
       if (floor !== currentFloor) {
@@ -1504,7 +1655,7 @@ export default function SkylineSwingerMobile() {
         showMsg('Down! Recovering...');
         playerHealth = 100;
         setHealth(100);
-        if (insideBuilding) setIndoors(null);
+        if (insideBuilding) { clearInterior(currentEnterable); setIndoors(null); }
         hero.position.set(0, 1.5, 0);
         heroVelocity.set(0, 0, 0);
         isSwinging = false;
@@ -1558,6 +1709,7 @@ export default function SkylineSwingerMobile() {
     function updateEnemies(dt, t) {
       for (const en of enemies) {
         if (!en.alive) continue;
+        if (en.indoor && !indoorBotActive(en)) continue;
         const distToPlayer = en.mesh.position.distanceTo(hero.position);
 
         if (en.hitFlashT > 0) {
@@ -1835,6 +1987,8 @@ export default function SkylineSwingerMobile() {
       updateInterior(dt);
       updateEnemies(dt, t);
       bosses.update(dt, t);
+      for (const en of indoorBots) if (en.alive && indoorBotActive(en)) constrainIndoorBot(en);
+      if (insideBuilding) updateIndoorPeople(dt, t);
       updateProjectiles(dt);
       updateParticles(dt);
       updateClouds(dt);
@@ -1921,7 +2075,11 @@ export default function SkylineSwingerMobile() {
       }
     }
 
-    function onWebStart(e) { e.stopPropagation(); webPressed = true; }
+    function onWebStart(e) {
+      e.stopPropagation();
+      if (insideBuilding) { useRequested = true; return; } // WEB becomes USE indoors
+      webPressed = true;
+    }
     function onWebEnd(e) { e.stopPropagation(); webPressed = false; releaseSwing(); }
     function onJumpStart(e) {
       e.stopPropagation();
@@ -1956,7 +2114,7 @@ export default function SkylineSwingerMobile() {
       if (e.repeat) return;
       keys.add(k);
       if (k === ' ') onJumpStart(noop);
-      if (k === 'e') webPressed = true;
+      if (k === 'e') { if (insideBuilding) useRequested = true; else webPressed = true; }
       if (k === 'f') fightRequested = true;
       if (k === 'q') doDodge();
     }
@@ -2027,6 +2185,8 @@ export default function SkylineSwingerMobile() {
       window.__ss = {
         hero, enterables, interiors, joystick, bosses, bossRoof, dodge: () => doDodge(),
         punch: () => { fightRequested = true; },
+        use: () => { useRequested = true; },
+        get indoorBots() { return indoorBots; }, get indoorOrbs() { return indoorOrbs; }, enemies,
         heal: () => { playerHealth = 100; setHealth(100); },
         enter: (i = 0, via = 'street') => enterBuilding(enterables[i], via),
         setYaw: (v) => { yaw = v; }, setPitch: (v) => { pitch = v; },
@@ -2161,7 +2321,7 @@ export default function SkylineSwingerMobile() {
             color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 14, fontWeight: 'bold', userSelect: 'none'
           }}>
-            WEB
+            {indoors ? 'USE' : 'WEB'}
           </div>
 
           {/* Fight button */}
@@ -2196,6 +2356,15 @@ export default function SkylineSwingerMobile() {
                   {f + 1}
                 </div>
               ))}
+            </div>
+          )}
+
+          {useHint && (
+            <div style={{
+              position: 'absolute', right: 20, bottom: 210, color: '#fff', background: 'rgba(0,0,0,0.55)',
+              padding: '6px 12px', borderRadius: 14, fontSize: 13, fontWeight: 'bold', pointerEvents: 'none'
+            }}>
+              {isTouch ? 'USE' : 'E'}: {useHint}
             </div>
           )}
 
