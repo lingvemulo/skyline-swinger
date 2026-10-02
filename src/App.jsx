@@ -20,7 +20,8 @@ export default function SkylineSwingerMobile() {
   const [health, setHealth] = useState(100);
   const [message, setMessage] = useState('');
   const [hitFlash, setHitFlash] = useState(false);
-  const [fatalError, setFatalError] = useState(null); // shown on screen so device-only bugs can be read off
+  const [fatalError, setFatalError] = useState(null);
+  const isTouch = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches; // shown on screen so device-only bugs can be read off
   const [elevatorFloor, setElevatorFloor] = useState(null); // floor index while standing in an elevator
   const [indoors, setIndoorsUI] = useState(false);
 
@@ -1198,8 +1199,9 @@ export default function SkylineSwingerMobile() {
       const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
 
       // smooth the raw joystick input so movement eases in/out instead of snapping
-      const targetJoyX = joystick.active ? joystick.x : 0;
-      const targetJoyY = joystick.active ? joystick.y : 0;
+      const kb = keyAxis();
+      const targetJoyX = joystick.active ? joystick.x : kb.x;
+      const targetJoyY = joystick.active ? joystick.y : kb.y;
       const smoothing = 1 - Math.pow(0.001, dt); // frame-rate independent lerp
       smoothedJoy.x += (targetJoyX - smoothedJoy.x) * smoothing;
       smoothedJoy.y += (targetJoyY - smoothedJoy.y) * smoothing;
@@ -1766,6 +1768,57 @@ export default function SkylineSwingerMobile() {
     function onJumpEnd(e) { e.stopPropagation(); jumpPressed = false; }
     function onFightStart(e) { e.stopPropagation(); fightRequested = true; }
 
+    // ---------- Keyboard + mouse (laptops/desktops) ----------
+    // WASD/arrows move, drag to look, Space jump, hold E web, F fight.
+    const keys = new Set();
+    const noop = { stopPropagation() {} };
+    function keyAxis() {
+      const has = (...k) => k.some(x => keys.has(x));
+      let x = (has('d', 'arrowright') ? 1 : 0) - (has('a', 'arrowleft') ? 1 : 0);
+      let y = (has('s', 'arrowdown') ? 1 : 0) - (has('w', 'arrowup') ? 1 : 0);
+      const m = Math.hypot(x, y);
+      if (m > 1) { x /= m; y /= m; }
+      return { x, y };
+    }
+    function onKeyDown(e) {
+      const k = e.key.toLowerCase();
+      if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+      if (e.repeat) return;
+      keys.add(k);
+      if (k === ' ') onJumpStart(noop);
+      if (k === 'e') webPressed = true;
+      if (k === 'f') fightRequested = true;
+    }
+    function onKeyUp(e) {
+      const k = e.key.toLowerCase();
+      keys.delete(k);
+      if (k === ' ') jumpPressed = false;
+      if (k === 'e') onWebEnd(noop);
+    }
+    function onBlur() {
+      if (keys.has('e')) onWebEnd(noop);
+      keys.clear();
+      jumpPressed = false;
+      mouseLook.active = false;
+    }
+    const mouseLook = { active: false, lastX: 0, lastY: 0 };
+    function onMouseDown(e) {
+      if (e.button !== 0 || isInside(elevatorPanelRef.current, e.clientX, e.clientY)) return;
+      mouseLook.active = true;
+      mouseLook.lastX = e.clientX;
+      mouseLook.lastY = e.clientY;
+      e.preventDefault(); // no text selection while dragging
+    }
+    function onMouseMove(e) {
+      if (!mouseLook.active) return;
+      yaw -= (e.clientX - mouseLook.lastX) * 0.0045;
+      pitch -= (e.clientY - mouseLook.lastY) * 0.0045;
+      pitch = Math.max(-1.2, Math.min(1.0, pitch));
+      mouseLook.lastX = e.clientX;
+      mouseLook.lastY = e.clientY;
+    }
+    function onMouseUp() { mouseLook.active = false; }
+
     function onResize() {
       camera.aspect = mount.clientWidth / mount.clientHeight;
       camera.updateProjectionMatrix();
@@ -1777,6 +1830,12 @@ export default function SkylineSwingerMobile() {
     container.addEventListener('touchmove', handleTouchMove, { passive: true });
     container.addEventListener('touchend', handleTouchEnd, { passive: true });
     container.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+    container.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
 
     const webBtn = webBtnRef.current;
     const jumpBtn = jumpBtnRef.current;
@@ -1812,6 +1871,12 @@ export default function SkylineSwingerMobile() {
       container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
       container.removeEventListener('touchcancel', handleTouchEnd);
+      container.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
       webBtn.removeEventListener('touchstart', onWebStart);
       webBtn.removeEventListener('touchend', onWebEnd);
       webBtn.removeEventListener('touchcancel', onWebEnd);
@@ -1846,7 +1911,9 @@ export default function SkylineSwingerMobile() {
             position: 'absolute', top: 10, left: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
             padding: '6px 12px', borderRadius: 10, fontSize: 12, lineHeight: 1.4
           }}>
-            Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Walk into a glowing doorway to go inside
+            {isTouch
+              ? <>Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Walk into a glowing doorway to go inside</>
+              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; F: fight &nbsp; Walk into a glowing doorway to go inside</>}
           </div>
           <div style={{
             position: 'absolute', top: 10, right: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',

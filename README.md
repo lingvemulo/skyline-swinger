@@ -9,6 +9,8 @@ An original web-swinging 3D browser game (Three.js + React), built for touch con
 - Web-swing traversal with soft rope physics (hold WEB, drag to add momentum)
 - Touch controls: left-side virtual joystick to move, right-side drag to look,
   WEB / JUMP / FIGHT buttons
+- Keyboard + mouse: WASD/arrows move, drag mouse to look, Space jump, hold E
+  web-swing, F fight
 - Patrolling robotic enemies ("Voltbots") with basic chase AI and melee combat
 - 40 collectible energy orbs
 - Heading-up mini-map (top right) showing buildings and door dots by type
