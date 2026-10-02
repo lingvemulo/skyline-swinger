@@ -79,11 +79,14 @@ function denimTex(THREE, base) {
 
 export function buildHero(THREE) {
   const root = new THREE.Group();
+  // flip spins the whole body around the hero's middle (used by the dodge)
+  const flip = new THREE.Group();
+  root.add(flip);
   const body = new THREE.Group();
   const SC = 1.1; // model built ~2.28 tall, scaled to ~2.5
   body.scale.setScalar(SC);
   body.position.y = -1.5;
-  root.add(body);
+  flip.add(body);
 
   const std = (o) => new THREE.MeshStandardMaterial({ roughness: 0.55, ...o });
   // one material per body "role"; outfits just recolour/retexture these
@@ -219,5 +222,5 @@ export function buildHero(THREE) {
   }
   applyOutfit('classic', true);
 
-  return { root, shoulderL, shoulderR, hipL, hipR, elbows, knees, headGrp, applyOutfit };
+  return { root, flip, shoulderL, shoulderR, hipL, hipR, elbows, knees, headGrp, applyOutfit };
 }

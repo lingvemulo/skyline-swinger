@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { buildHero, OUTFITS } from './hero.js';
+import { createBosses, ARENA } from './bosses.js';
 import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
 export default function SkylineSwingerMobile() {
@@ -38,6 +39,13 @@ export default function SkylineSwingerMobile() {
     return { outfit: s0.outfit || 'classic', mask: s0.mask !== false, unlocked: s0.unlocked || [], bossesBeaten: s0.bossesBeaten || [] };
   });
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
+  const [bossHud, setBossHud] = useState(null);
+  const [danger, setDanger] = useState(false);
+  const dodgeRef = useRef(null);
+  const dodgeBtnRef = useRef(null);
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const bossDefeatedRef = useRef(null);
   const [unlockToast, setUnlockToast] = useState('');
   const outfitRef = useRef({ id: save.outfit, mask: save.mask });
   useEffect(() => {
@@ -56,6 +64,14 @@ export default function SkylineSwingerMobile() {
     });
   }, []);
   useEffect(() => { if (defeated >= 10) unlockOutfit('midnight'); }, [defeated, unlockOutfit]);
+  bossDefeatedRef.current = (types, rematch) => {
+    setSave(s => ({ ...s, bossesBeaten: Array.from(new Set([...s.bossesBeaten, ...types])) }));
+    for (const ty of types) unlockOutfit(ty);
+    if (rematch) {
+      setUnlockToast('CHAMPION! You beat both bosses at once!');
+      setTimeout(() => setUnlockToast(''), 4000);
+    }
+  };
   useEffect(() => { if (score >= 40) unlockOutfit('gold'); }, [score, unlockOutfit]);
 
   const startGame = useCallback(() => {
@@ -293,6 +309,7 @@ export default function SkylineSwingerMobile() {
       for (let z = -CITY_SIZE + 30; z < CITY_SIZE - 30; z += 22) {
         if (Math.random() < 0.35) continue;
         if (Math.abs(x) < 14 && Math.abs(z) < 14) continue;
+        if (Math.hypot(x - ARENA.x, z - ARENA.z) < ARENA.r + 12) continue; // boss arena plaza
         const w = 8 + Math.random() * 7, d = 8 + Math.random() * 7, h = 14 + Math.random() * 60;
         const isGlass = Math.random() < 0.3;
 
@@ -324,6 +341,7 @@ export default function SkylineSwingerMobile() {
         );
         trim.position.set(b.position.x, h + 0.3, b.position.z);
         scene.add(trim);
+        b.userData.trim = trim;
 
         // foundation band grounds the building against the street
         const base = new THREE.Mesh(
@@ -344,6 +362,7 @@ export default function SkylineSwingerMobile() {
           );
           antenna.position.set(b.position.x, h + 2, b.position.z);
           scene.add(antenna);
+          b.userData.decor = [antenna];
         } else if (roofRand < 0.45) {
           const tankGrp = new THREE.Group();
           const tankMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.8, metalness: 0.1 });
@@ -355,6 +374,7 @@ export default function SkylineSwingerMobile() {
           tankGrp.add(cone);
           tankGrp.position.set(b.position.x - w / 4, h + 0.6, b.position.z - d / 4);
           scene.add(tankGrp);
+          b.userData.decor = [tankGrp];
         } else if (roofRand < 0.6 && h > 30) {
           // setback tier — a smaller second tower stacked on top, common on real skyscrapers
           const w2 = Math.min(w * (0.4 + Math.random() * 0.3), w - 6.2);
@@ -364,6 +384,7 @@ export default function SkylineSwingerMobile() {
           tier.position.set(b.position.x, h + h2 / 2, b.position.z);
           tier.castShadow = true;
           scene.add(tier);
+          b.userData.decor = [tier];
         }
       }
     }
@@ -509,6 +530,85 @@ export default function SkylineSwingerMobile() {
       instanced(new THREE.PlaneGeometry(1.4, 2.3), hutDoorMat, entries,
         e => m4.compose(new THREE.Vector3(e.hutX, e.top + 1.15, e.hutZ - 1.32), q.setFromAxisAngle(up, Math.PI), one));
     }
+
+    // ---------- Boss arenas ----------
+    // Plaza arena for the Rage Brute: stone paving ringed by pillars with torches.
+    {
+      const tileTex = new THREE.TextureLoader().load('/textures/large_grey_tiles.jpg');
+      tileTex.wrapS = tileTex.wrapT = THREE.RepeatWrapping;
+      tileTex.repeat.set(24, 24);
+      tileTex.colorSpace = THREE.SRGBColorSpace;
+      const floor = new THREE.Mesh(
+        new THREE.CircleGeometry(ARENA.r + 2, 64),
+        new THREE.MeshStandardMaterial({ map: tileTex, color: 0xcfc4b0, roughness: 0.8 })
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set(ARENA.x, 0.03, ARENA.z);
+      floor.receiveShadow = true;
+      scene.add(floor);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(ARENA.r - 0.4, ARENA.r + 0.4, 96),
+        new THREE.MeshBasicMaterial({ color: 0xb02a2a, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(ARENA.x, 0.05, ARENA.z);
+      scene.add(ring);
+      const pillarMat = new THREE.MeshStandardMaterial({ color: 0x8d8478, roughness: 0.9 });
+      const fireMat = new THREE.MeshBasicMaterial({ color: 0xffa040 });
+      const bannerMat = new THREE.MeshStandardMaterial({ color: 0x9b1c1c, roughness: 0.8, side: THREE.DoubleSide });
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const px = ARENA.x + Math.cos(a) * (ARENA.r + 3), pz = ARENA.z + Math.sin(a) * (ARENA.r + 3);
+        const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 9, 10), pillarMat);
+        pillar.position.set(px, 4.5, pz);
+        pillar.castShadow = true;
+        scene.add(pillar);
+        const fire = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.4, 8), fireMat);
+        fire.position.set(px, 9.7, pz);
+        scene.add(fire);
+        const banner = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 4), bannerMat);
+        banner.position.set(px - Math.cos(a) * 1.0, 5.5, pz - Math.sin(a) * 1.0);
+        banner.lookAt(ARENA.x, 5.5, ARENA.z);
+        scene.add(banner);
+      }
+    }
+    // Helipad on the tallest building for the Stone Titan: a wide platform
+    // that overhangs the roof. Pushed into `buildings` so the hero can stand
+    // on it and web-swing to it.
+    const bossRoof = (() => {
+      let tallest = buildings[0];
+      for (const b of buildings) if (b.geometry.parameters.height > tallest.geometry.parameters.height) tallest = b;
+      for (const m of tallest.userData.decor || []) scene.remove(m);
+      if (tallest.userData.trim) scene.remove(tallest.userData.trim); // would poke up through the pad
+      const top = tallest.geometry.parameters.height + 0.06; // just above the roof so they don't flicker
+      const half = 20;
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x3b4048, roughness: 0.85 });
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(half * 2, 1, half * 2), padMat);
+      pad.position.set(tallest.position.x, top - 0.5, tallest.position.z);
+      pad.receiveShadow = true;
+      pad.castShadow = true;
+      scene.add(pad);
+      buildings.push(pad);
+      const markMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, side: THREE.DoubleSide });
+      const circle = new THREE.Mesh(new THREE.RingGeometry(9, 10, 64), markMat);
+      circle.rotation.x = -Math.PI / 2;
+      circle.position.set(pad.position.x, top + 0.02, pad.position.z);
+      scene.add(circle);
+      for (const [w, d, ox] of [[1.4, 9, -3], [1.4, 9, 3], [6, 1.4, 0]]) {
+        const bar = new THREE.Mesh(new THREE.PlaneGeometry(w, d), markMat);
+        bar.rotation.x = -Math.PI / 2;
+        bar.position.set(pad.position.x + ox, top + 0.03, pad.position.z);
+        scene.add(bar);
+      }
+      const lightMat = new THREE.MeshBasicMaterial({ color: 0xff3030 });
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        const l = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 6), lightMat);
+        const r = half - 0.6;
+        l.position.set(pad.position.x + Math.max(-r, Math.min(r, Math.cos(a) * r * 1.42)), top + 0.3,
+          pad.position.z + Math.max(-r, Math.min(r, Math.sin(a) * r * 1.42)));
+        scene.add(l);
+      }
+      return { x: pad.position.x, y: top, z: pad.position.z, half };
+    })();
 
     // Distant hazy skyline ring — sits just inside the fog's far distance so it
     // reads as a soft, atmospheric silhouette rather than a hard-edged cutout,
@@ -1450,7 +1550,9 @@ export default function SkylineSwingerMobile() {
           }
         }
       }
-      if (!defeatedAny && hitAny) showMsg('Hit!');
+      const bossHits = bosses.punch(3.4);
+      if (bossHits) sfxHit();
+      if (!defeatedAny && (hitAny || bossHits)) showMsg('Hit!');
     }
 
     function updateEnemies(dt, t) {
@@ -1592,6 +1694,17 @@ export default function SkylineSwingerMobile() {
         ctx.arc(px, py, 3.2, 0, Math.PI * 2);
         ctx.fill();
       }
+      // boss lairs
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const z of Object.values(bosses.zones)) {
+        let dx = z.x - hx, dz = z.z - hz;
+        let px = (dx * cy - dz * sy) * sc, py = (dx * sy + dz * cy) * sc;
+        const d = Math.hypot(px, py), lim = r - 9;
+        if (d > lim) { px = px / d * lim; py = py / d * lim; } // pin far lairs to the map edge
+        ctx.fillText('💀', r + px, r + py);
+      }
       // the hero, pointing up
       ctx.fillStyle = '#fff';
       ctx.beginPath();
@@ -1616,6 +1729,71 @@ export default function SkylineSwingerMobile() {
       heroShadow.material.opacity = Math.max(0.05, 0.5 - diff * 0.02);
     }
 
+    // ---------- Bosses, danger sense and dodge ----------
+    let timeScale = 1;
+    let dangerActive = false;
+    let dodgeCooldown = 0;
+    let flipT = 0;
+    const bosses = createBosses(THREE, scene, {
+      hero, heroVel: heroVelocity, damagePlayer, spawnBurst, triggerShake, playTone, playNoise, showMsg,
+      roof: bossRoof,
+      onHud: (list) => setBossHud(list),
+      onDanger: (on) => {
+        dangerActive = on;
+        setDanger(on);
+        if (on) playTone({ freq: 1500, freqEnd: 1900, duration: 0.12, type: 'sine', gain: 0.07 });
+      },
+      onDefeated: (types, rematch) => bossDefeatedRef.current && bossDefeatedRef.current(types, rematch),
+      bothBeaten: () => ['brute', 'titan'].every(b => saveRef.current.bossesBeaten.includes(b)),
+    });
+    // danger-sense "tingle" lines around the hero's head
+    const senseGroup = new THREE.Group();
+    {
+      const senseMat = new THREE.MeshBasicMaterial({ color: 0xfff2a8, transparent: true, opacity: 0.9, depthWrite: false });
+      for (let i = 0; i < 6; i++) {
+        const arc = new THREE.Mesh(new THREE.TorusGeometry(0.42 + (i % 2) * 0.12, 0.018, 4, 12, Math.PI * 0.35), senseMat);
+        const a = (i / 6) * Math.PI * 2;
+        arc.position.set(Math.cos(a) * 0.08, 0, Math.sin(a) * 0.08);
+        arc.rotation.set(Math.PI / 2, 0, a);
+        senseGroup.add(arc);
+      }
+      senseGroup.position.y = 0.85; // around the head
+      senseGroup.visible = false;
+      hero.add(senseGroup);
+    }
+    function doDodge() {
+      if (dodgeCooldown > 0 || insideBuilding) return;
+      const side = joystick.active ? joystick.x : keyAxis().x || (Math.random() < 0.5 ? -1 : 1);
+      let dir = bosses.dodgeDir(side);
+      if (!dir) {
+        // no boss around: dodge sideways relative to the camera
+        dir = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)).multiplyScalar(side >= 0 ? 1 : -1);
+      }
+      if (isSwinging) { isSwinging = false; }
+      heroVelocity.x = dir.x * 16;
+      heroVelocity.z = dir.z * 16;
+      heroVelocity.y = 8;
+      invincibleT = Math.max(invincibleT, 0.75);
+      dodgeCooldown = 0.9;
+      flipT = 0.55;
+      playTone({ freq: 500, freqEnd: 1100, duration: 0.18, type: 'triangle', gain: 0.12 });
+      if (dangerActive) showMsg('Dodged!', 700);
+    }
+    dodgeRef.current = doDodge;
+    function updateDodge(dt, t) {
+      if (flipT > 0) {
+        flipT = Math.max(0, flipT - dt);
+        heroRig.flip.rotation.x = -(1 - flipT / 0.55) * Math.PI * 2;
+      } else {
+        heroRig.flip.rotation.x = 0;
+      }
+      senseGroup.visible = dangerActive;
+      if (dangerActive) {
+        senseGroup.rotation.y = t * 3;
+        senseGroup.scale.setScalar(1 + Math.sin(t * 25) * 0.08);
+      }
+    }
+
     let errorShown = false;
     function reportError(where, err) {
       if (errorShown) return;
@@ -1634,8 +1812,12 @@ export default function SkylineSwingerMobile() {
       }
     }
     function frame() {
-      const dt = Math.min(clock.getDelta(), 0.05);
+      // danger sense slows time a little while a boss attack is incoming
+      timeScale += ((dangerActive ? 0.55 : 1) - timeScale) * 0.15;
+      const dt = Math.min(clock.getDelta(), 0.05) * timeScale;
       const t = clock.getElapsedTime();
+      if (dodgeCooldown > 0) dodgeCooldown -= dt;
+      updateDodge(dt, t);
       if (invincibleT > 0) invincibleT -= dt;
       if (attackCooldownT > 0) attackCooldownT -= dt;
       if (webPressed && !isSwinging && !insideBuilding) startSwing();
@@ -1652,6 +1834,7 @@ export default function SkylineSwingerMobile() {
       updateBuildingEntry(dt);
       updateInterior(dt);
       updateEnemies(dt, t);
+      bosses.update(dt, t);
       updateProjectiles(dt);
       updateParticles(dt);
       updateClouds(dt);
@@ -1679,7 +1862,7 @@ export default function SkylineSwingerMobile() {
 
     function handleTouchStart(e) {
       for (const t of e.changedTouches) {
-        if (isInside(webBtnRef.current, t.clientX, t.clientY) || isInside(jumpBtnRef.current, t.clientX, t.clientY) || isInside(fightBtnRef.current, t.clientX, t.clientY) || isInside(elevatorPanelRef.current, t.clientX, t.clientY) || isInside(wardrobeBtnRef.current, t.clientX, t.clientY) || isInside(wardrobePanelRef.current, t.clientX, t.clientY)) {
+        if (isInside(webBtnRef.current, t.clientX, t.clientY) || isInside(jumpBtnRef.current, t.clientX, t.clientY) || isInside(fightBtnRef.current, t.clientX, t.clientY) || isInside(elevatorPanelRef.current, t.clientX, t.clientY) || isInside(wardrobeBtnRef.current, t.clientX, t.clientY) || isInside(wardrobePanelRef.current, t.clientX, t.clientY) || isInside(dodgeBtnRef.current, t.clientX, t.clientY)) {
           continue;
         }
         const rect = containerRef.current.getBoundingClientRect();
@@ -1775,6 +1958,7 @@ export default function SkylineSwingerMobile() {
       if (k === ' ') onJumpStart(noop);
       if (k === 'e') webPressed = true;
       if (k === 'f') fightRequested = true;
+      if (k === 'q') doDodge();
     }
     function onKeyUp(e) {
       const k = e.key.toLowerCase();
@@ -1841,7 +2025,9 @@ export default function SkylineSwingerMobile() {
     if (import.meta.env.DEV || location.search.includes('debug')) {
       // test hook for driving the game from a desktop browser (add ?debug to the URL)
       window.__ss = {
-        hero, enterables, interiors, joystick,
+        hero, enterables, interiors, joystick, bosses, bossRoof, dodge: () => doDodge(),
+        punch: () => { fightRequested = true; },
+        heal: () => { playerHealth = 100; setHealth(100); },
         enter: (i = 0, via = 'street') => enterBuilding(enterables[i], via),
         setYaw: (v) => { yaw = v; }, setPitch: (v) => { pitch = v; },
         jump: () => { jumpPressed = true; setTimeout(() => { jumpPressed = false; }, 100); },
@@ -1901,7 +2087,7 @@ export default function SkylineSwingerMobile() {
           }}>
             {isTouch
               ? <>Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Walk into a glowing doorway to go inside</>
-              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; F: fight &nbsp; Walk into a glowing doorway to go inside</>}
+              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; F: fight &nbsp; Q: dodge &nbsp; 💀 on the map = boss</>}
           </div>
           <div style={{
             position: 'absolute', top: 10, right: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
@@ -2010,6 +2196,58 @@ export default function SkylineSwingerMobile() {
                   {f + 1}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Boss health bars */}
+          {bossHud && (
+            <div style={{
+              position: 'absolute', top: 34, left: '50%', transform: 'translateX(-50%)', width: 'min(360px, 70%)',
+              display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none'
+            }}>
+              {bossHud.map((b, i) => (
+                <div key={i}>
+                  <div style={{ color: '#fff', fontSize: 11, fontWeight: 'bold', textAlign: 'center', textShadow: '0 1px 3px #000', letterSpacing: 1 }}>
+                    💀 {b.name}
+                  </div>
+                  <div style={{ height: 12, background: 'rgba(0,0,0,0.55)', borderRadius: 6, border: '2px solid rgba(255,255,255,0.45)', overflow: 'hidden' }}>
+                    <div style={{ width: `${(b.hp / b.max) * 100}%`, height: '100%', background: 'linear-gradient(90deg,#ff3838,#ff9a3c)', transition: 'width 0.2s ease' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Danger sense: pulsing screen edges */}
+          {danger && (
+            <>
+              <style>{`@keyframes ssDanger { 0%,100% { opacity: 0.45 } 50% { opacity: 1 } }`}</style>
+              <div style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none', animation: 'ssDanger 0.35s infinite',
+                boxShadow: 'inset 0 0 70px 18px rgba(255,190,40,0.85)'
+              }} />
+              <div style={{
+                position: 'absolute', top: '22%', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none',
+                color: '#ffe58a', fontWeight: 'bold', fontSize: 16, letterSpacing: 2, textShadow: '0 0 8px #000'
+              }}>
+                ⚡ DANGER SENSE — DODGE! ⚡
+              </div>
+            </>
+          )}
+
+          {/* Dodge button: shown during boss fights, pulses when danger sense fires */}
+          {bossHud && (
+            <div ref={dodgeBtnRef}
+              onTouchStart={(e) => { e.stopPropagation(); dodgeRef.current && dodgeRef.current(); }}
+              onMouseDown={(e) => { e.stopPropagation(); dodgeRef.current && dodgeRef.current(); }}
+              style={{
+                position: 'absolute', right: 128, bottom: 112, width: danger ? 78 : 64, height: danger ? 78 : 64, borderRadius: '50%',
+                background: danger ? 'rgba(255,214,60,0.75)' : 'rgba(255,214,60,0.3)', border: '2px solid rgba(255,214,60,0.95)',
+                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold',
+                userSelect: 'none', cursor: 'pointer', transition: 'all 0.15s', textShadow: '0 1px 2px #000',
+                boxShadow: danger ? '0 0 24px rgba(255,214,60,0.9)' : 'none'
+              }}>
+              DODGE{isTouch ? '' : ' (Q)'}
             </div>
           )}
 

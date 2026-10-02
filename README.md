@@ -29,6 +29,12 @@ An original web-swinging 3D browser game (Three.js + React), built for touch con
   (OUTFIT button): Classic suit, Hoodie + jeans, T-shirt + jacket, plus
   unlockable Midnight (10 Voltbots), Gold (40 orbs), Brute Buster and Titan
   Breaker (boss wins). Choice and unlocks are saved in the browser.
+- Boss fights (`src/bosses.js`): Giant Rage Brute in the plaza arena north of
+  the start, Stone Titan on a helipad atop the tallest building, then a rematch
+  against both at once on the roof. Attacks: ground-smash shockwave (jump it),
+  car throw, charge, jump slam. Danger sense flashes the screen edges and slows
+  time before hits; DODGE (Q) flips the hero out of the way. 💀 marks lairs on
+  the mini-map.
 - Walk-cycle limb animation, camera bob, filmic tone mapping
 
 ## Stack
