@@ -51,7 +51,18 @@ export default function SkylineSwingerMobile() {
     scene.fog = new THREE.Fog(0xbfe0f2, 90, 340);
 
     const camera = new THREE.PerspectiveCamera(72, mount.clientWidth / mount.clientHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch (err) {
+      // e.g. Chrome with "Use graphics acceleration" off: no WebGL at all
+      setFatalError(
+        "This browser can't show 3D graphics right now (WebGL is switched off).\n\n" +
+        'Chrome: Settings → System → turn on "Use graphics acceleration when available", then click Relaunch.\n' +
+        'Or open the game in Safari.\n\n' + navigator.userAgent
+      );
+      return;
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.shadowMap.enabled = true;
@@ -1949,11 +1960,11 @@ export default function SkylineSwingerMobile() {
 
           {fatalError && (
             <div style={{
-              position: 'absolute', left: 10, right: 10, bottom: 130, zIndex: 50,
+              position: 'absolute', left: 10, right: 10, top: 60, zIndex: 50,
               background: 'rgba(120,0,20,0.92)', color: '#fff', borderRadius: 10, padding: '10px 12px',
               fontSize: 11, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text'
             }}>
-              <b>Something went wrong — please send a photo of this to Claude:</b>{'\n'}{fatalError}
+              <b>Something went wrong:</b>{'\n'}{fatalError}
             </div>
           )}
 
