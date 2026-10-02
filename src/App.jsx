@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { buildHero, OUTFITS } from './hero.js';
 import { createBosses, ARENA } from './bosses.js';
+import { mountChat } from './chat/chat-ui.js';
 import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
 export default function SkylineSwingerMobile() {
@@ -49,6 +50,11 @@ export default function SkylineSwingerMobile() {
   const bossDefeatedRef = useRef(null);
   const [unlockToast, setUnlockToast] = useState('');
   const outfitRef = useRef({ id: save.outfit, mask: save.mask });
+  // chat button (Lobby quick-chat + private rooms) — plain DOM, lives outside the game container
+  useEffect(() => {
+    const chat = mountChat({ game: 'skyline', position: { left: '10px', top: 'calc(50% - 23px)' } });
+    return () => chat.destroy();
+  }, []);
   useEffect(() => {
     try { localStorage.setItem('skyline-swinger-save', JSON.stringify(save)); } catch (e) { /* private mode */ }
     outfitRef.current = { id: save.outfit, mask: save.mask };
