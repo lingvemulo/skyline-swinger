@@ -25,6 +25,10 @@ An original web-swinging 3D browser game (Three.js + React), built for touch con
   per material at load so each building is only a few dozen draw calls.
 - Add `?debug` to the URL to expose a `window.__ss` test hook (teleport,
   joystick, enter buildings) for testing from a desktop browser
+- Human hero (`src/hero.js`) with knees/elbows, removable mask and a wardrobe
+  (OUTFIT button): Classic suit, Hoodie + jeans, T-shirt + jacket, plus
+  unlockable Midnight (10 Voltbots), Gold (40 orbs), Brute Buster and Titan
+  Breaker (boss wins). Choice and unlocks are saved in the browser.
 - Walk-cycle limb animation, camera bob, filmic tone mapping
 
 ## Stack

@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
+import { buildHero, OUTFITS } from './hero.js';
 import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
 export default function SkylineSwingerMobile() {
@@ -14,6 +15,9 @@ export default function SkylineSwingerMobile() {
   const elevatorGoRef = useRef(null);
   const elevatorPanelRef = useRef(null);
   const miniMapRef = useRef(null);
+  const applyOutfitRef = useRef(null);
+  const wardrobePanelRef = useRef(null);
+  const wardrobeBtnRef = useRef(null);
   const [started, setStarted] = useState(false);
   const [score, setScore] = useState(0);
   const [defeated, setDefeated] = useState(0);
@@ -24,6 +28,35 @@ export default function SkylineSwingerMobile() {
   const isTouch = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches; // shown on screen so device-only bugs can be read off
   const [elevatorFloor, setElevatorFloor] = useState(null); // floor index while standing in an elevator
   const [indoors, setIndoorsUI] = useState(false);
+  // Wardrobe: chosen outfit + mask, and which outfits are unlocked. Saved in
+  // this browser only (localStorage), so progress survives a page reload.
+  const loadSave = () => {
+    try { return JSON.parse(localStorage.getItem('skyline-swinger-save') || '{}'); } catch (e) { return {}; }
+  };
+  const [save, setSave] = useState(() => {
+    const s0 = loadSave();
+    return { outfit: s0.outfit || 'classic', mask: s0.mask !== false, unlocked: s0.unlocked || [], bossesBeaten: s0.bossesBeaten || [] };
+  });
+  const [wardrobeOpen, setWardrobeOpen] = useState(false);
+  const [unlockToast, setUnlockToast] = useState('');
+  const outfitRef = useRef({ id: save.outfit, mask: save.mask });
+  useEffect(() => {
+    try { localStorage.setItem('skyline-swinger-save', JSON.stringify(save)); } catch (e) { /* private mode */ }
+    outfitRef.current = { id: save.outfit, mask: save.mask };
+    if (applyOutfitRef.current) applyOutfitRef.current(save.outfit, save.mask);
+  }, [save]);
+  const isUnlocked = (o) => !o.unlock || save.unlocked.includes(o.id);
+  const unlockOutfit = useCallback((id) => {
+    setSave(s => {
+      if (s.unlocked.includes(id)) return s;
+      const o = OUTFITS.find(x => x.id === id);
+      setUnlockToast(`New outfit unlocked: ${o.name}!`);
+      setTimeout(() => setUnlockToast(''), 3500);
+      return { ...s, unlocked: [...s.unlocked, id] };
+    });
+  }, []);
+  useEffect(() => { if (defeated >= 10) unlockOutfit('midnight'); }, [defeated, unlockOutfit]);
+  useEffect(() => { if (score >= 40) unlockOutfit('gold'); }, [score, unlockOutfit]);
 
   const startGame = useCallback(() => {
     // Create/resume the AudioContext synchronously inside this click handler —
@@ -938,65 +971,11 @@ export default function SkylineSwingerMobile() {
     }
 
     // ---------- Hero ----------
-    const hero = new THREE.Group();
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xd6273c, roughness: 0.55, metalness: 0.1 });
-    const suitMat = new THREE.MeshStandardMaterial({ color: 0x1c2a4a, roughness: 0.5, metalness: 0.15 });
-
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.0, 10), bodyMat);
-    torso.position.y = 1.55;
-    torso.castShadow = true;
-    hero.add(torso);
-    const capTop = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 10), bodyMat);
-    capTop.position.y = 2.05;
-    hero.add(capTop);
-    const capBottom = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 10), bodyMat);
-    capBottom.position.y = 1.05;
-    hero.add(capBottom);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 12), suitMat);
-    head.position.y = 2.25;
-    head.castShadow = true;
-    hero.add(head);
-
-    // Arms as shoulder-pivoted groups so they can swing during movement/swinging
-    const armGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.7, 8);
-    const shoulderL = new THREE.Group();
-    shoulderL.position.set(-0.6, 1.9, 0);
-    const armMeshL = new THREE.Mesh(armGeo, suitMat);
-    armMeshL.position.y = -0.35;
-    armMeshL.castShadow = true;
-    shoulderL.add(armMeshL);
-    hero.add(shoulderL);
-
-    const shoulderR = new THREE.Group();
-    shoulderR.position.set(0.6, 1.9, 0);
-    const armMeshR = new THREE.Mesh(armGeo, suitMat);
-    armMeshR.position.y = -0.35;
-    armMeshR.castShadow = true;
-    shoulderR.add(armMeshR);
-    hero.add(shoulderR);
-
-    // Legs as hip-pivoted groups for a proper walk cycle
-    const legGeo = new THREE.CylinderGeometry(0.16, 0.14, 0.9, 8);
-    const hipL = new THREE.Group();
-    hipL.position.set(-0.2, 1.0, 0);
-    const legMeshL = new THREE.Mesh(legGeo, suitMat);
-    legMeshL.position.y = -0.45;
-    legMeshL.castShadow = true;
-    hipL.add(legMeshL);
-    hero.add(hipL);
-
-    const hipR = new THREE.Group();
-    hipR.position.set(0.2, 1.0, 0);
-    const legMeshR = new THREE.Mesh(legGeo, suitMat);
-    legMeshR.position.y = -0.45;
-    legMeshR.castShadow = true;
-    hipR.add(legMeshR);
-    hero.add(hipR);
-
-    // hero.position sits 1.5 above the feet (the physics convention); the
-    // body was modelled with its feet 0.1 above the group origin, which left
-    // the hero floating 1.6 above the ground — drop every part to fix that
-    for (const c of hero.children) c.position.y -= 1.6;
+    const heroRig = buildHero(THREE);
+    const hero = heroRig.root;
+    const { shoulderL, shoulderR, hipL, hipR } = heroRig;
+    applyOutfitRef.current = (id, maskOn) => heroRig.applyOutfit(id, maskOn);
+    heroRig.applyOutfit(outfitRef.current.id, outfitRef.current.mask);
     hero.position.set(0, 1.5, 0);
     scene.add(hero);
 
@@ -1297,6 +1276,14 @@ export default function SkylineSwingerMobile() {
         hero.rotation.z += (0 - hero.rotation.z) * 0.1;
       }
 
+      // knees bend as each leg swings back; tucked while airborne or swinging
+      const tuck = isSwinging ? 0.7 : !onGround ? 0.45 : 0.05;
+      heroRig.knees[0].rotation.x += (Math.max(0, hipL.rotation.x) * 0.9 + tuck - heroRig.knees[0].rotation.x) * 0.3;
+      heroRig.knees[1].rotation.x += (Math.max(0, hipR.rotation.x) * 0.9 + tuck - heroRig.knees[1].rotation.x) * 0.3;
+      const elbowBend = isSwinging ? -0.15 : -0.35 - Math.min(0.4, horizSpeed * 0.03);
+      heroRig.elbows[0].rotation.x += (elbowBend - heroRig.elbows[0].rotation.x) * 0.3;
+      heroRig.elbows[1].rotation.x += ((punchT > 0 ? 0 : elbowBend) - heroRig.elbows[1].rotation.x) * 0.3;
+
       // punch swing overrides the right arm pose for its short duration
       if (punchT > 0) {
         punchT = Math.max(0, punchT - dt);
@@ -1309,7 +1296,7 @@ export default function SkylineSwingerMobile() {
 
     const camRay = new THREE.Raycaster();
     function updateCamera(dt, t) {
-      const camDist = insideBuilding ? 5.5 : isSwinging ? 9 : 7;
+      const camDist = insideBuilding ? 5 : isSwinging ? 8.5 : 5.5;
       const offset = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch) + 0.35,
@@ -1692,7 +1679,7 @@ export default function SkylineSwingerMobile() {
 
     function handleTouchStart(e) {
       for (const t of e.changedTouches) {
-        if (isInside(webBtnRef.current, t.clientX, t.clientY) || isInside(jumpBtnRef.current, t.clientX, t.clientY) || isInside(fightBtnRef.current, t.clientX, t.clientY) || isInside(elevatorPanelRef.current, t.clientX, t.clientY)) {
+        if (isInside(webBtnRef.current, t.clientX, t.clientY) || isInside(jumpBtnRef.current, t.clientX, t.clientY) || isInside(fightBtnRef.current, t.clientX, t.clientY) || isInside(elevatorPanelRef.current, t.clientX, t.clientY) || isInside(wardrobeBtnRef.current, t.clientX, t.clientY) || isInside(wardrobePanelRef.current, t.clientX, t.clientY)) {
           continue;
         }
         const rect = containerRef.current.getBoundingClientRect();
@@ -1803,7 +1790,8 @@ export default function SkylineSwingerMobile() {
     }
     const mouseLook = { active: false, lastX: 0, lastY: 0 };
     function onMouseDown(e) {
-      if (e.button !== 0 || isInside(elevatorPanelRef.current, e.clientX, e.clientY)) return;
+      if (e.button !== 0 || isInside(elevatorPanelRef.current, e.clientX, e.clientY) ||
+          isInside(wardrobeBtnRef.current, e.clientX, e.clientY) || isInside(wardrobePanelRef.current, e.clientX, e.clientY)) return;
       mouseLook.active = true;
       mouseLook.lastX = e.clientX;
       mouseLook.lastY = e.clientY;
@@ -2022,6 +2010,76 @@ export default function SkylineSwingerMobile() {
                   {f + 1}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Wardrobe button + menu */}
+          <div ref={wardrobeBtnRef} onClick={() => setWardrobeOpen(o => !o)} style={{
+            position: 'absolute', top: 46, left: 10, padding: '6px 12px', borderRadius: 18, cursor: 'pointer',
+            background: 'rgba(0,0,0,0.45)', border: '2px solid rgba(255,255,255,0.35)', color: '#fff',
+            fontSize: 13, fontWeight: 'bold', userSelect: 'none'
+          }}>
+            👕 OUTFIT
+          </div>
+          {wardrobeOpen && (
+            <div ref={wardrobePanelRef} style={{
+              position: 'absolute', top: 86, left: 10, width: 280, maxHeight: 'calc(100% - 110px)', overflowY: 'auto',
+              background: 'rgba(14,20,32,0.94)', border: '2px solid rgba(255,255,255,0.25)', borderRadius: 14,
+              padding: 12, color: '#fff', zIndex: 40, userSelect: 'none'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <b style={{ fontSize: 15 }}>Wardrobe</b>
+                <span onClick={() => setWardrobeOpen(false)} style={{ cursor: 'pointer', fontSize: 18, padding: '0 4px' }}>✕</span>
+              </div>
+              {(() => {
+                const cur = OUTFITS.find(o => o.id === save.outfit);
+                const suit = cur && cur.kind === 'suit';
+                return (
+                  <div
+                    onClick={() => suit && setSave(sv => ({ ...sv, mask: !sv.mask }))}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px',
+                      borderRadius: 10, background: 'rgba(255,255,255,0.08)', marginBottom: 10,
+                      cursor: suit ? 'pointer' : 'default', opacity: suit ? 1 : 0.5
+                    }}
+                  >
+                    <span>🎭 Mask</span>
+                    <b>{suit ? (save.mask ? 'ON' : 'OFF') : 'suits only'}</b>
+                  </div>
+                );
+              })()}
+              {OUTFITS.map(o => {
+                const open = isUnlocked(o);
+                const progress = !o.unlock ? '' : o.unlock.type === 'voltbots' ? ` (${Math.min(defeated, o.unlock.n)}/${o.unlock.n})`
+                  : o.unlock.type === 'orbs' ? ` (${Math.min(score, o.unlock.n)}/${o.unlock.n})` : '';
+                return (
+                  <div
+                    key={o.id}
+                    onClick={() => open && setSave(sv => ({ ...sv, outfit: o.id }))}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', marginBottom: 6, borderRadius: 10,
+                      cursor: open ? 'pointer' : 'default',
+                      background: save.outfit === o.id ? 'rgba(94,242,255,0.25)' : 'rgba(255,255,255,0.05)',
+                      border: save.outfit === o.id ? '2px solid rgba(94,242,255,0.8)' : '2px solid transparent'
+                    }}
+                  >
+                    <span style={{ fontSize: 18, width: 22, textAlign: 'center' }}>{open ? (o.kind === 'suit' ? '🦸' : '👟') : '🔒'}</span>
+                    <span style={{ flex: 1, opacity: open ? 1 : 0.6 }}>
+                      <div style={{ fontSize: 13, fontWeight: 'bold' }}>{o.name}</div>
+                      {!open && <div style={{ fontSize: 11, opacity: 0.85 }}>{o.unlock.text}{progress}</div>}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {unlockToast && (
+            <div style={{
+              position: 'absolute', top: '28%', left: '50%', transform: 'translateX(-50%)', zIndex: 45,
+              background: 'linear-gradient(90deg,#ffb347,#ff6b9a)', color: '#1a1020', fontWeight: 'bold',
+              padding: '10px 18px', borderRadius: 20, fontSize: 15, boxShadow: '0 4px 18px rgba(0,0,0,0.4)'
+            }}>
+              🎉 {unlockToast}
             </div>
           )}
 
