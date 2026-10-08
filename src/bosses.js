@@ -143,6 +143,7 @@ export function createBosses(THREE, scene, api) {
   const cars = [];
   let lastHudKey = '';
   let dangerOn = false;
+  let paused = false; // story missions switch the boss fights off
 
   const ringGeo = new THREE.RingGeometry(0.93, 1.0, 72);
   const ringMat = new THREE.MeshBasicMaterial({
@@ -478,7 +479,17 @@ export function createBosses(THREE, scene, api) {
     zones,
     get inFight() { return !!fight; },
     get fight() { return fight; }, // for the ?debug test hook
+    // paused while a story mission runs; on resume, zones the hero is standing
+    // in stay disarmed until they leave (so a boss doesn't pounce right after)
+    setPaused(v) {
+      paused = v;
+      if (!v) for (const z of Object.values(zones)) if (inZone(z, hero.position, 12)) z.armed = false;
+    },
     update(dt, t) {
+      if (paused) {
+        if (dangerOn) { dangerOn = false; api.onDanger(false); }
+        return;
+      }
       // arm zones once the hero has left them; start a fight on entry
       for (const z of Object.values(zones)) {
         if (!z.armed && !(fight && fight.zone === z) && !inZone(z, hero.position, 12)) z.armed = true;

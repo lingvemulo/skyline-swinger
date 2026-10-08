@@ -11,3 +11,6 @@ html, body, #root {
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
+
+/* story movie scenes and the story menu hide the floating chat button */
+body.ss-movie .b21c-btn, body.ss-movie .b21c-panel { display: none !important; }
