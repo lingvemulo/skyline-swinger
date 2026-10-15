@@ -1417,6 +1417,32 @@ export default function SkylineSwingerMobile() {
       }
     }
 
+    // Solid building walls: push the hero back out of a building's sides and
+    // stop the part of their velocity going into the wall (so they slide along
+    // it). Only below the roofline — near the top, checkGround lands them on
+    // the roof instead.
+    const HERO_R = 0.5;
+    function collideWalls() {
+      const feet = hero.position.y - 1.5;
+      for (const b of buildings) {
+        const p = b.geometry.parameters;
+        const top = b.position.y + p.height / 2, bottom = b.position.y - p.height / 2;
+        if (feet >= top - 2.5 || feet + 2.4 <= bottom) continue;
+        const hw = p.width / 2 + HERO_R, hd = p.depth / 2 + HERO_R;
+        const dx = hero.position.x - b.position.x, dz = hero.position.z - b.position.z;
+        if (Math.abs(dx) >= hw || Math.abs(dz) >= hd) continue;
+        // push out through the nearest side
+        const ox = hw - Math.abs(dx), oz = hd - Math.abs(dz);
+        if (ox < oz) {
+          hero.position.x = b.position.x + Math.sign(dx || 1) * hw;
+          if (heroVelocity.x * Math.sign(dx || 1) < 0) heroVelocity.x = 0;
+        } else {
+          hero.position.z = b.position.z + Math.sign(dz || 1) * hd;
+          if (heroVelocity.z * Math.sign(dz || 1) < 0) heroVelocity.z = 0;
+        }
+      }
+    }
+
     function checkGround() {
       onGround = hero.position.y <= 1.5001;
       for (const b of buildings) {
@@ -1487,6 +1513,7 @@ export default function SkylineSwingerMobile() {
         hero.position.addScaledVector(heroVelocity, dt);
       }
 
+      if (!insideBuilding) collideWalls();
       const preLandVY = heroVelocity.y;
       if (insideBuilding) onGround = collideInterior(insideBuilding, hero.position, heroVelocity);
       else checkGround();
