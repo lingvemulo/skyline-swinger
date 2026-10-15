@@ -659,7 +659,37 @@ export default function SkylineSwingerMobile() {
       }
     }
 
-    // Decorative traffic — pure visual life for the streets, no gameplay collision
+    // ---------- Nobody walks through buildings ----------
+    // Push a point (feet at feetY, radius r) back out through the nearest side
+    // of any building it has walked into. Things standing on a roof (feet at or
+    // above its top) are left alone. Returns true if it was pushed.
+    function pushOutOfBuildings(pos, r, feetY) {
+      let pushed = false;
+      for (const b of buildings) {
+        const p = b.geometry.parameters;
+        const top = b.position.y + p.height / 2, bottom = b.position.y - p.height / 2;
+        if (feetY >= top - 0.5 || feetY + 2 <= bottom) continue;
+        const hw = p.width / 2 + r, hd = p.depth / 2 + r;
+        const dx = pos.x - b.position.x, dz = pos.z - b.position.z;
+        if (Math.abs(dx) >= hw || Math.abs(dz) >= hd) continue;
+        if (hw - Math.abs(dx) < hd - Math.abs(dz)) pos.x = b.position.x + Math.sign(dx || 1) * hw;
+        else pos.z = b.position.z + Math.sign(dz || 1) * hd;
+        pushed = true;
+      }
+      return pushed;
+    }
+    // is there a building at street level here (with a margin)?
+    function streetBlocked(x, z, m) {
+      if (Math.abs(x) > CITY_SIZE - 4 || Math.abs(z) > CITY_SIZE - 4) return true;
+      for (const b of buildings) {
+        const p = b.geometry.parameters;
+        if (b.position.y - p.height / 2 > 1) continue; // raised things (helipad)
+        if (Math.abs(x - b.position.x) < p.width / 2 + m && Math.abs(z - b.position.z) < p.depth / 2 + m) return true;
+      }
+      return false;
+    }
+
+    // Decorative traffic: cars drive along the streets and turn at buildings
     function makeCar(color) {
       const grp = new THREE.Group();
       const bodyMatC = new THREE.MeshStandardMaterial({ color, metalness: 0.4, roughness: 0.4 });
@@ -677,34 +707,42 @@ export default function SkylineSwingerMobile() {
     }
     const cars = [];
     const carColors = [0xd23c3c, 0x3c6fd2, 0xd2c23c, 0xe8e8e8, 0x3c3c3c];
-    for (let i = 0; i < 6; i++) {
-      const alongX = i % 2 === 0;
-      const lanePos = (Math.floor(i / 2) - 1) * 66;
+    for (let i = 0; i < 8; i++) {
       const car = makeCar(carColors[i % carColors.length]);
-      const dir = Math.random() < 0.5 ? 1 : -1;
-      car.userData = { alongX, speed: 9 + Math.random() * 6, dir };
-      if (alongX) {
-        car.position.set(-CITY_SIZE + Math.random() * CITY_SIZE * 2, 0.02, lanePos);
-        car.rotation.y = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-      } else {
-        car.position.set(lanePos, 0.02, -CITY_SIZE + Math.random() * CITY_SIZE * 2);
-        car.rotation.y = dir > 0 ? 0 : Math.PI;
+      let x = 0, z = 0;
+      for (let k = 0; k < 60; k++) {
+        x = (Math.random() - 0.5) * CITY_SIZE * 1.6;
+        z = (Math.random() - 0.5) * CITY_SIZE * 1.6;
+        if (!streetBlocked(x, z, 3)) break;
       }
+      const heading = Math.floor(Math.random() * 4) * Math.PI / 2;
+      car.userData = { heading, cruise: 9 + Math.random() * 5, speed: 0 };
+      car.position.set(x, 0.02, z);
+      car.rotation.y = heading;
       scene.add(car);
       cars.push(car);
     }
+    const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
     function updateCars(dt) {
       for (const car of cars) {
-        const d = car.userData;
-        if (d.alongX) {
-          car.position.x += d.dir * d.speed * dt;
-          if (car.position.x > CITY_SIZE) car.position.x = -CITY_SIZE;
-          if (car.position.x < -CITY_SIZE) car.position.x = CITY_SIZE;
-        } else {
-          car.position.z += d.dir * d.speed * dt;
-          if (car.position.z > CITY_SIZE) car.position.z = -CITY_SIZE;
-          if (car.position.z < -CITY_SIZE) car.position.z = CITY_SIZE;
+        const d = car.userData, p = car.position;
+        const look = 5 + d.speed * 0.4;
+        const clear = (a) => !streetBlocked(p.x + Math.sin(a) * look, p.z + Math.cos(a) * look, 1.6)
+          && !streetBlocked(p.x + Math.sin(a) * look * 0.5, p.z + Math.cos(a) * look * 0.5, 1.6);
+        if (!d.want && d.want !== 0) d.want = d.heading;
+        if (!clear(d.want)) {
+          // turn down a side street (prefer left/right, else turn around)
+          const side = Math.random() < 0.5 ? 1 : -1;
+          const opts = [Math.PI / 2 * side, -Math.PI / 2 * side, Math.PI / 4 * side, -Math.PI / 4 * side, Math.PI];
+          d.want = d.heading + (opts.find(o => clear(d.heading + o)) ?? Math.PI);
         }
+        const diff = angDiff(d.want, d.heading);
+        d.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, diff));
+        d.speed += ((d.cruise - Math.min(6, Math.abs(diff) * 6)) - d.speed) * Math.min(1, dt * 1.5);
+        const nx = p.x + Math.sin(d.heading) * d.speed * dt, nz = p.z + Math.cos(d.heading) * d.speed * dt;
+        if (!streetBlocked(nx, nz, 1.1) || streetBlocked(p.x, p.z, 1.1)) { p.x = nx; p.z = nz; }
+        else { d.speed = 0; d.want = d.heading + Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1); }
+        car.rotation.y = d.heading;
       }
     }
 
@@ -790,6 +828,7 @@ export default function SkylineSwingerMobile() {
         if (dist > 0.3) {
           dir.normalize();
           p.grp.position.addScaledVector(dir, p.speed * dt);
+          if (pushOutOfBuildings(p.grp.position, 0.35, 0)) p.wanderTimer = 0; // hit a wall: go somewhere else
           p.grp.lookAt(p.target.x, p.grp.position.y, p.target.z);
           const phase = t * (5 + p.speed * 2);
           const swing = Math.sin(phase) * 0.5;
@@ -949,7 +988,15 @@ export default function SkylineSwingerMobile() {
     for (let i = 0; i < buildings.length && i < 60; i += 10) {
       const b = buildings[i];
       const topY = b.position.y + b.geometry.parameters.height / 2;
-      enemies.push(makeEnemy(b.position.x, b.position.z, topY, 'grunt'));
+      const en = makeEnemy(b.position.x, b.position.z, topY, 'grunt');
+      en.roof = b;
+      enemies.push(en);
+    }
+    // ground spawns that landed inside a building get moved out to the street
+    for (const en of enemies) {
+      if (en.roof) continue;
+      pushOutOfBuildings(en.mesh.position, 1, en.type === 'flyer' ? en.mesh.position.y - 0.5 : 0);
+      en.patrolTarget.copy(en.mesh.position);
     }
 
     // ---------- Building interiors ----------
@@ -1756,6 +1803,23 @@ export default function SkylineSwingerMobile() {
     }
 
     function updateEnemies(dt, t) {
+      moveEnemies(dt, t);
+      for (const en of enemies) {
+        if (!en.alive || en.indoor) continue;
+        const pos = en.mesh.position;
+        if (en.roof) {
+          const p = en.roof.geometry.parameters;
+          const lx = p.width / 2 - 0.6, lz = p.depth / 2 - 0.6;
+          pos.x = Math.max(en.roof.position.x - lx, Math.min(en.roof.position.x + lx, pos.x));
+          pos.z = Math.max(en.roof.position.z - lz, Math.min(en.roof.position.z + lz, pos.z));
+        } else {
+          const r = en.type === 'heavy' ? 0.8 : en.type === 'flyer' ? 0.9 : 0.5;
+          const feet = en.type === 'flyer' ? pos.y - 0.5 : en.groundY;
+          if (pushOutOfBuildings(pos, r, feet) && en.state !== 'chase') en.wanderTimer = 0;
+        }
+      }
+    }
+    function moveEnemies(dt, t) {
       for (const en of enemies) {
         if (!en.alive) continue;
         if (en.indoor && !indoorBotActive(en)) continue;
@@ -2284,7 +2348,7 @@ export default function SkylineSwingerMobile() {
     if (import.meta.env.DEV || location.search.includes('debug')) {
       // test hook for driving the game from a desktop browser (add ?debug to the URL)
       window.__ss = {
-        hero, enterables, interiors, joystick, bosses, bossRoof, story, dodge: () => doDodge(),
+        hero, enterables, interiors, joystick, bosses, bossRoof, story, cars, pedestrians, buildings, dodge: () => doDodge(),
         punch: () => { fightRequested = true; },
         use: () => { useRequested = true; },
         get indoorBots() { return indoorBots; }, get indoorOrbs() { return indoorOrbs; }, enemies,
