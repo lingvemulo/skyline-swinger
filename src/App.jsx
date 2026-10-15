@@ -42,6 +42,51 @@ export default function SkylineSwingerMobile() {
     return { outfit: s0.outfit || 'classic', mask: s0.mask !== false, unlocked: s0.unlocked || [], bossesBeaten: s0.bossesBeaten || [], story: normalizeProgress(s0.story) };
   });
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
+  // Full screen: real Fullscreen API where the browser has it (iPad, Android,
+  // laptops); iPhone Safari doesn't, so there we fill the window and explain
+  // Add to Home Screen (which opens full screen, no Safari bars).
+  const isStandalone = typeof window !== 'undefined' && (window.navigator.standalone ||
+    (window.matchMedia && (window.matchMedia('(display-mode: fullscreen)').matches || window.matchMedia('(display-mode: standalone)').matches)));
+  const canRealFullscreen = typeof document !== 'undefined' && !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  const [bigScreen, setBigScreen] = useState(() => {
+    try { return isStandalone || localStorage.getItem('skyline-swinger-big') === '1'; } catch (e) { return !!isStandalone; }
+  });
+  const [homeTip, setHomeTip] = useState(false);
+  // short screens (a phone turned sideways): smaller mini-map so the buttons fit
+  const [shortScreen, setShortScreen] = useState(false);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setShortScreen(el.clientHeight < 470));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => { try { localStorage.setItem('skyline-swinger-big', bigScreen ? '1' : '0'); } catch (e) { /* private mode */ } }, [bigScreen]);
+  useEffect(() => {
+    const onFs = () => { if (!(document.fullscreenElement || document.webkitFullscreenElement)) setBigScreen(isStandalone || false); };
+    document.addEventListener('fullscreenchange', onFs);
+    document.addEventListener('webkitfullscreenchange', onFs);
+    return () => { document.removeEventListener('fullscreenchange', onFs); document.removeEventListener('webkitfullscreenchange', onFs); };
+  }, [isStandalone]);
+  const toggleFullscreen = () => {
+    const inFs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (inFs) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      setBigScreen(false);
+      return;
+    }
+    if (bigScreen && !canRealFullscreen) { setBigScreen(isStandalone || false); return; }
+    setBigScreen(true);
+    if (canRealFullscreen) {
+      const el = document.documentElement;
+      const p = (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+      if (p && p.then) p.then(() => { try { screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* not supported */ } }).catch(() => {});
+    } else if (!isStandalone) {
+      let seen = false;
+      try { seen = localStorage.getItem('skyline-swinger-hometip') === '1'; localStorage.setItem('skyline-swinger-hometip', '1'); } catch (e) { /* private mode */ }
+      if (!seen) setHomeTip(true);
+    }
+  };
   // story mode: UI state pushed from story.js (movie scene, phone call, mission HUD, results)
   const [storyUi, setStoryUi] = useState({ cut: null, call: null, hud: null, result: null, banner: null });
   const [storyHud, setStoryHud] = useState(null); // story fight health bar (e.g. Shadow Ninja)
@@ -2561,6 +2606,8 @@ export default function SkylineSwingerMobile() {
     fightBtn.addEventListener('touchstart', onFightStart, { passive: true });
 
     window.addEventListener('resize', onResize);
+    const resizeObs = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    if (resizeObs) resizeObs.observe(mount);
     if (import.meta.env.DEV || location.search.includes('debug')) {
       // test hook for driving the game from a desktop browser (add ?debug to the URL)
       window.__ss = {
@@ -2615,6 +2662,7 @@ export default function SkylineSwingerMobile() {
       jumpBtn.removeEventListener('touchcancel', onJumpEnd);
       fightBtn.removeEventListener('touchstart', onFightStart);
       window.removeEventListener('resize', onResize);
+      if (resizeObs) resizeObs.disconnect();
       renderer.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
     };
@@ -2623,7 +2671,11 @@ export default function SkylineSwingerMobile() {
   return (
     <div
       ref={containerRef}
-      style={{
+      style={bigScreen ? {
+        // fill the whole screen, keeping clear of the iPhone notch / home bar
+        position: 'fixed', top: 0, bottom: 0, left: 'env(safe-area-inset-left)', right: 'env(safe-area-inset-right)',
+        background: '#0b1020', overflow: 'hidden', touchAction: 'none', zIndex: 10
+      } : {
         position: 'relative', width: '100%', height: '85vh', maxHeight: 700,
         background: '#0b1020', overflow: 'hidden', borderRadius: 12, touchAction: 'none'
       }}
@@ -2659,10 +2711,10 @@ export default function SkylineSwingerMobile() {
             position: 'absolute', top: 66, right: 10, pointerEvents: 'none',
             display: indoors ? 'none' : 'flex', flexDirection: 'column', alignItems: 'center'
           }}>
-            <canvas ref={miniMapRef} width={120} height={120} style={{ width: 120, height: 120 }} />
+            <canvas ref={miniMapRef} width={120} height={120} style={{ width: shortScreen ? 84 : 120, height: shortScreen ? 84 : 120 }} />
             <div style={{
               marginTop: 4, padding: '3px 6px', borderRadius: 8, background: 'rgba(0,0,0,0.4)',
-              display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, rowGap: 1,
+              display: shortScreen ? 'none' : 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, rowGap: 1,
               fontSize: 9, color: '#fff'
             }}>
               {[['Hotel', '#ffb347'], ['Apartments', '#7bd389'], ['Shop', '#ff6b9a'], ['Office', '#6bb7ff']].map(([n, c]) => (
@@ -2670,6 +2722,34 @@ export default function SkylineSwingerMobile() {
               ))}
             </div>
           </div>
+
+          {/* Full screen button */}
+          {!isStandalone && (
+            <div data-ui onClick={toggleFullscreen} style={{
+              position: 'absolute', top: 66, right: shortScreen ? 104 : 140, width: 40, height: 40, borderRadius: 10, cursor: 'pointer',
+              background: 'rgba(0,0,0,0.45)', border: '2px solid rgba(255,255,255,0.35)', color: '#fff',
+              display: indoors ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, userSelect: 'none'
+            }} title="Full screen">
+              {bigScreen ? '🗗' : '⛶'}
+            </div>
+          )}
+          {homeTip && (
+            <div data-ui style={{
+              position: 'absolute', top: '18%', left: '50%', transform: 'translateX(-50%)', zIndex: 46, width: 'min(320px, 90%)',
+              background: 'rgba(14,20,32,0.96)', border: '2px solid rgba(94,242,255,0.6)', borderRadius: 16, padding: 16,
+              color: '#fff', textAlign: 'center', fontSize: 14, lineHeight: 1.5
+            }}>
+              <div style={{ fontSize: 30 }}>📲</div>
+              <b style={{ fontSize: 16 }}>Want REAL full screen on iPhone?</b>
+              <div style={{ margin: '8px 0 4px' }}>1. Tap the <b>Share</b> button <span style={{ fontSize: 17 }}>⬆️</span> in Safari</div>
+              <div>2. Tap <b>Add to Home Screen</b></div>
+              <div style={{ marginBottom: 10 }}>3. Open <b>Skyline</b> from your home screen 🕷️</div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>Tip: turn your phone sideways for the best view!</div>
+              <div onClick={() => setHomeTip(false)} style={{
+                padding: '10px 0', borderRadius: 12, background: '#22c55e', fontWeight: 'bold', cursor: 'pointer'
+              }}>GOT IT</div>
+            </div>
+          )}
 
           {/* Health bar */}
           <div style={{
@@ -2707,7 +2787,7 @@ export default function SkylineSwingerMobile() {
               onTouchStart={(e) => { e.stopPropagation(); zipRef.current && zipRef.current(); }}
               onMouseDown={(e) => { e.stopPropagation(); zipRef.current && zipRef.current(); }}
               style={{
-                position: 'absolute', right: 36, bottom: 212, width: 56, height: 56, borderRadius: '50%',
+                position: 'absolute', right: 212, bottom: 36, width: 56, height: 56, borderRadius: '50%',
                 background: 'rgba(180,107,255,0.4)', border: '2px solid rgba(180,107,255,0.85)',
                 color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 12, fontWeight: 'bold', userSelect: 'none', cursor: 'pointer'
