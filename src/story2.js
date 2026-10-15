@@ -1388,7 +1388,7 @@ function missionRings(ctx) {
   let cur = hero.position.clone();
   let dir = Math.atan2(fwd.x, fwd.z);
   const CITY = api.CITY_SIZE - 25;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 5; i++) {
     let p = null;
     for (let k = 0; k < 40; k++) {
       const a = dir + rand(-1.0, 1.0) + (k > 25 ? Math.PI : 0);
@@ -1411,7 +1411,7 @@ function missionRings(ctx) {
     root.add(m);
     return m;
   });
-  const skyC = (pts[4] || hero.position).clone();
+  const skyC = (pts[2] || hero.position).clone();
   const sky = stormSky(ctx, root, skyC);
   let idx = 0, timeLeft = 40;
   const prev = hero.position.clone();

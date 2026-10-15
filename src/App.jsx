@@ -12,6 +12,7 @@ export default function SkylineSwingerMobile() {
   const stickRef = useRef(null);
   const webBtnRef = useRef(null);
   const jumpBtnRef = useRef(null);
+  const zipRef = useRef(null);
   const fightBtnRef = useRef(null);
   const speedFxRef = useRef(null);
   const audioCtxRef = useRef(null);
@@ -1154,6 +1155,8 @@ export default function SkylineSwingerMobile() {
     }
 
     function enterBuilding(ent, via) {
+      zip = null;
+      if (wallRun) endWallRun();
       clearInterior(currentEnterable);
       currentEnterable = ent;
       const interior = interiors[ent.type];
@@ -1447,20 +1450,198 @@ export default function SkylineSwingerMobile() {
       return origin.clone().add(dir.multiplyScalar(60)).setY(Math.max(30, origin.y + 15));
     }
 
+    // ---------- Swinging (Spider-Man 2 style) ----------
+    // Auto-aim: the web grabs the best building point ahead of and above the
+    // hero, in the direction they're moving (or looking), instead of wherever
+    // the camera ray happens to land.
+    const lastMove = new THREE.Vector3(); // joystick direction in world space, from updateHero
+    const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+    function findAnchor() {
+      const hp = hero.position;
+      const dir = new THREE.Vector3(heroVelocity.x, 0, heroVelocity.z);
+      if (lastMove.lengthSq() > 0.04) dir.copy(lastMove);
+      else if (dir.lengthSq() < 9) dir.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+      dir.normalize();
+      const ideal = hp.clone().addScaledVector(dir, 16).add(new THREE.Vector3(0, 14, 0));
+      let best = null, bestScore = Infinity;
+      const pt = new THREE.Vector3();
+      for (const b of buildings) {
+        const p = b.geometry.parameters;
+        const top = b.position.y + p.height / 2;
+        if (top < hp.y + 3 || p.width < 3) continue;
+        if (Math.abs(b.position.x - hp.x) > 70 || Math.abs(b.position.z - hp.z) > 70) continue;
+        const hw = p.width / 2, hd = p.depth / 2;
+        pt.set(clampN(ideal.x, b.position.x - hw, b.position.x + hw), clampN(ideal.y, hp.y + 4, top), clampN(ideal.z, b.position.z - hd, b.position.z + hd));
+        // if the ideal point is inside the building, use the nearest wall instead
+        const ix = hw - Math.abs(pt.x - b.position.x), iz = hd - Math.abs(pt.z - b.position.z);
+        if (ix > 0.01 && iz > 0.01) {
+          if (ix < iz) pt.x = b.position.x + Math.sign(pt.x - b.position.x || 1) * hw;
+          else pt.z = b.position.z + Math.sign(pt.z - b.position.z || 1) * hd;
+        }
+        const d = pt.distanceTo(hp);
+        if (d < 6 || d > 48) continue;
+        const ahead = ((pt.x - hp.x) * dir.x + (pt.z - hp.z) * dir.z) / Math.max(0.01, Math.hypot(pt.x - hp.x, pt.z - hp.z));
+        const score = pt.distanceTo(ideal) + (ahead < 0 ? 30 : (1 - ahead) * 6);
+        if (score < bestScore) { bestScore = score; best = pt.clone(); }
+      }
+      return best;
+    }
     function startSwing() {
       if (isSwinging) return;
-      const point = raycastFromCamera();
+      if (wallRun) endWallRun();
+      zip = null;
+      const point = findAnchor() || raycastFromCamera();
       swingAnchor = point;
-      swingLength = hero.position.distanceTo(point);
+      swingLength = hero.position.distanceTo(point) * 0.92; // a little pull as the web catches
       isSwinging = true;
       sfxSwing();
-      showMsg('Web attached!');
     }
+    // Swing boost: letting go near the bottom of the swing, while moving fast,
+    // flings the hero forward and up ("perfect release").
     function releaseSwing() {
-      if (isSwinging) {
-        isSwinging = false;
-        sfxRelease();
-        showMsg('Released');
+      if (!isSwinging) return;
+      isSwinging = false;
+      sfxRelease();
+      const below = swingAnchor.y - hero.position.y;
+      const side = Math.hypot(hero.position.x - swingAnchor.x, hero.position.z - swingAnchor.z);
+      const speed = Math.hypot(heroVelocity.x, heroVelocity.z);
+      if (speed > 9 && below > 0 && Math.atan2(side, below) < 0.65 && heroVelocity.y > -4) {
+        heroVelocity.x *= 1.3;
+        heroVelocity.z *= 1.3;
+        heroVelocity.y = Math.max(heroVelocity.y, 0) + 9;
+        showMsg('PERFECT RELEASE! ⚡', 900);
+        playTone({ freq: 700, freqEnd: 1500, duration: 0.2, type: 'triangle', gain: 0.13 });
+      } else {
+        heroVelocity.y += 3;
+      }
+      const v = heroVelocity.length();
+      if (v > 48) heroVelocity.multiplyScalar(48 / v);
+    }
+
+    // Web-zip: shoot a web at the rooftop in front and zip straight onto it
+    // (or onto a wall straight ahead, which starts a wall run).
+    let zip = null; // { from, to, t, T, roof, wall }
+    const zipRay = new THREE.Raycaster();
+    function findZipTarget() {
+      const look = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+      const fh = new THREE.Vector3(look.x, 0, look.z).normalize();
+      const hp = hero.position;
+      let best = null, bestScore = Infinity;
+      for (const b of buildings) {
+        const p = b.geometry.parameters;
+        if (p.width < 4 || p.depth < 4) continue;
+        const top = b.position.y + p.height / 2;
+        if (top > hp.y + 45) continue;
+        const dx = b.position.x - hp.x, dz = b.position.z - hp.z;
+        const along = dx * fh.x + dz * fh.z;
+        if (along < 2 || along > 65) continue;
+        const lateral = Math.abs(dx * fh.z - dz * fh.x);
+        if (lateral > Math.max(p.width, p.depth) / 2 + 6) continue;
+        const hw = p.width / 2, hd = p.depth / 2;
+        const to = new THREE.Vector3(clampN(hp.x, b.position.x - hw + 1.5, b.position.x + hw - 1.5), top + 1.5, clampN(hp.z, b.position.z - hd + 1.5, b.position.z + hd - 1.5));
+        if (to.distanceTo(hp) < 4) continue;
+        const score = lateral * 1.5 + along * 0.4 + Math.max(0, top - hp.y) * 0.3;
+        if (score < bestScore) { bestScore = score; best = to; }
+      }
+      if (best) return { to: best, roof: true };
+      zipRay.set(hp, look);
+      zipRay.far = 60;
+      const hit = zipRay.intersectObjects(buildings, false)[0];
+      if (hit && hit.face && Math.abs(hit.face.normal.y) < 0.5) {
+        const b = hit.object, p = b.geometry.parameters;
+        const nx = Math.round(hit.face.normal.x), nz = Math.round(hit.face.normal.z);
+        const to = hit.point.clone().add(new THREE.Vector3(nx * HERO_R, 0, nz * HERO_R));
+        to.y = Math.max(1.5, to.y);
+        return { to, wall: { b, nx, nz, top: b.position.y + p.height / 2 } };
+      }
+      return null;
+    }
+    function startZip() {
+      if (insideBuilding || zip || story.inCutscene) return;
+      const target = findZipTarget();
+      if (!target) { showMsg('Nothing to zip to — look at a building!', 1200); return; }
+      if (wallRun) endWallRun();
+      isSwinging = false;
+      const from = hero.position.clone();
+      zip = { from, ...target, t: 0, T: Math.max(0.25, from.distanceTo(target.to) / 50) };
+      playTone({ freq: 400, freqEnd: 1800, duration: 0.25, type: 'sawtooth', gain: 0.08 });
+    }
+    zipRef.current = startZip;
+
+    // Wall run: run up the side of a building while pushing into it.
+    let wallRun = null; // { b, nx, nz, top }
+    let wallCd = 0;
+    let lastWall = null; // wall the hero was pushed out of this frame
+    function startWallRun(w) {
+      wallRun = { ...w };
+      isSwinging = false;
+      heroVelocity.set(0, 0, 0);
+      showMsg('Wall run!', 700);
+    }
+    function endWallRun() {
+      wallRun = null;
+      wallCd = 0.4;
+      heroRig.flip.rotation.x = 0;
+    }
+    function updateZipWall(dt, t, moveX, moveZ) {
+      if (zip) {
+        zip.t += dt;
+        const u = Math.min(1, zip.t / zip.T);
+        hero.position.lerpVectors(zip.from, zip.to, 1 - (1 - u) * (1 - u));
+        hero.position.y += Math.sin(u * Math.PI) * Math.min(3, zip.T * 4);
+        heroVelocity.set(0, 0, 0);
+        hero.rotation.y = Math.atan2(zip.to.x - zip.from.x, zip.to.z - zip.from.z);
+        shoulderR.rotation.x = -2.8; shoulderL.rotation.x = -0.4;
+        hipL.rotation.x = 0.6; hipR.rotation.x = 0.3;
+        if (u >= 1) {
+          const z = zip;
+          zip = null;
+          if (z.roof) {
+            const f = new THREE.Vector3(z.to.x - z.from.x, 0, z.to.z - z.from.z).normalize();
+            heroVelocity.set(f.x * 5, 5, f.z * 5);
+            sfxLand();
+          } else if (z.wall) startWallRun(z.wall);
+        }
+        return;
+      }
+      const w = wallRun, b = w.b, p = b.geometry.parameters;
+      const into = -(moveX * w.nx + moveZ * w.nz);
+      const tx = -w.nz, tz = w.nx;
+      const along = moveX * tx + moveZ * tz;
+      // stay stuck to the wall, can drift sideways along it
+      if (w.nx) hero.position.x = b.position.x + w.nx * (p.width / 2 + HERO_R);
+      else hero.position.z = b.position.z + w.nz * (p.depth / 2 + HERO_R);
+      hero.position.x += tx * along * 6 * dt;
+      hero.position.z += tz * along * 6 * dt;
+      const offEdge = w.nx ? Math.abs(hero.position.z - b.position.z) > p.depth / 2 + 0.3 : Math.abs(hero.position.x - b.position.x) > p.width / 2 + 0.3;
+      const climbing = into > 0.3;
+      hero.position.y += (climbing ? 13 : -5) * dt;
+      heroVelocity.set(0, 0, 0);
+      hero.rotation.y = Math.atan2(-w.nx, -w.nz);
+      hero.rotation.z = 0;
+      // running up the wall: legs pumping, arms reaching
+      const ph = t * (climbing ? 16 : 6);
+      hipL.rotation.x = -0.7 + Math.sin(ph) * 0.8;
+      hipR.rotation.x = -0.7 - Math.sin(ph) * 0.8;
+      shoulderL.rotation.x = -2.4 + Math.sin(ph) * 0.6;
+      shoulderR.rotation.x = -2.4 - Math.sin(ph) * 0.6;
+      heroRig.flip.rotation.x = -0.25;
+      const feet = hero.position.y - 1.5;
+      if (feet >= w.top - 0.3) {
+        // made it to the top: hop over onto the roof
+        hero.position.y = w.top + 1.7;
+        hero.position.x -= w.nx * 1.4;
+        hero.position.z -= w.nz * 1.4;
+        endWallRun();
+        heroVelocity.set(-w.nx * 4, 5, -w.nz * 4);
+        sfxJump();
+        showMsg('Up and over!', 800);
+        return;
+      }
+      if (offEdge || (feet <= 0.05 && !climbing)) {
+        endWallRun();
+        heroVelocity.set(w.nx * 3, 0, w.nz * 3);
+        if (hero.position.y < 1.5) hero.position.y = 1.5;
       }
     }
 
@@ -1471,6 +1652,7 @@ export default function SkylineSwingerMobile() {
     const HERO_R = 0.5;
     function collideWalls() {
       const feet = hero.position.y - 1.5;
+      lastWall = null;
       for (const b of buildings) {
         const p = b.geometry.parameters;
         const top = b.position.y + p.height / 2, bottom = b.position.y - p.height / 2;
@@ -1483,9 +1665,11 @@ export default function SkylineSwingerMobile() {
         if (ox < oz) {
           hero.position.x = b.position.x + Math.sign(dx || 1) * hw;
           if (heroVelocity.x * Math.sign(dx || 1) < 0) heroVelocity.x = 0;
+          lastWall = { b, nx: Math.sign(dx || 1), nz: 0, top };
         } else {
           hero.position.z = b.position.z + Math.sign(dz || 1) * hd;
           if (heroVelocity.z * Math.sign(dz || 1) < 0) heroVelocity.z = 0;
+          lastWall = { b, nx: 0, nz: Math.sign(dz || 1), top };
         }
       }
     }
@@ -1529,6 +1713,9 @@ export default function SkylineSwingerMobile() {
       const moveX = forward.x * fwdAmt + right.x * rightAmt;
       const moveZ = forward.z * fwdAmt + right.z * rightAmt;
       const moveMag = Math.min(1, Math.hypot(fwdAmt, rightAmt));
+      lastMove.set(moveX, 0, moveZ);
+      if (wallCd > 0) wallCd -= dt;
+      if (zip || wallRun) { updateZipWall(dt, t, moveX, moveZ); return; }
 
       if (isSwinging) {
         heroVelocity.y += GRAVITY * dt;
@@ -1560,7 +1747,15 @@ export default function SkylineSwingerMobile() {
         hero.position.addScaledVector(heroVelocity, dt);
       }
 
-      if (!insideBuilding) collideWalls();
+      if (!insideBuilding) {
+        collideWalls();
+        // pushing into a wall (or swinging into one) starts a wall run
+        const nearDoor = enterables.some(e => Math.abs(e.doorPos.x - hero.position.x) < 3 && Math.abs(e.doorPos.z - hero.position.z) < 3 && hero.position.y < 4);
+        if (lastWall && !wallRun && wallCd <= 0 && !nearDoor) {
+          const into = -(moveX * lastWall.nx + moveZ * lastWall.nz);
+          if (into > 0.6 || (isSwinging && into > 0.2)) { startWallRun(lastWall); return; }
+        }
+      }
       const preLandVY = heroVelocity.y;
       if (insideBuilding) onGround = collideInterior(insideBuilding, hero.position, heroVelocity);
       else checkGround();
@@ -1571,7 +1766,14 @@ export default function SkylineSwingerMobile() {
       }
       onGroundPrev = onGround;
 
-      if (moveX !== 0 || moveZ !== 0) hero.rotation.y = Math.atan2(moveX, moveZ);
+      const flySpeed = Math.hypot(heroVelocity.x, heroVelocity.z);
+      if ((isSwinging || !onGround) && flySpeed > 4) {
+        hero.rotation.y = Math.atan2(heroVelocity.x, heroVelocity.z);
+        // the camera swings round behind the direction of travel (unless you're steering it)
+        if (!look.active && !mouseLook.active && flySpeed > 8) {
+          yaw += angDiff(Math.atan2(-heroVelocity.x, -heroVelocity.z), yaw) * Math.min(1, dt * 1.2);
+        }
+      } else if (moveX !== 0 || moveZ !== 0) hero.rotation.y = Math.atan2(moveX, moveZ);
       if (!insideBuilding) {
         hero.position.x = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.x));
         hero.position.z = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.z));
@@ -1697,10 +1899,11 @@ export default function SkylineSwingerMobile() {
         webLine.geometry.dispose();
         webLine = null;
       }
-      if (isSwinging && swingAnchor) {
+      const anchorNow = isSwinging ? swingAnchor : zip ? zip.to : null;
+      if (anchorNow) {
         const start = new THREE.Vector3();
         shoulderR.getWorldPosition(start);
-        const end = swingAnchor;
+        const end = anchorNow;
         const dist = start.distanceTo(end);
         const mid = start.clone().lerp(end, 0.5);
         mid.y -= Math.min(2.5, dist * 0.08); // rope sags realistically instead of a rigid straight line
@@ -1749,6 +1952,8 @@ export default function SkylineSwingerMobile() {
       }
       if (playerHealth <= 0) {
         showMsg('Down! Recovering...');
+        zip = null;
+        if (wallRun) endWallRun();
         playerHealth = 100;
         setHealth(100);
         if (insideBuilding) { clearInterior(currentEnterable); setIndoors(null); }
@@ -2037,6 +2242,8 @@ export default function SkylineSwingerMobile() {
       busyReason: () => insideBuilding ? 'Go outside first!' : bosses.inFight ? 'Finish the boss fight first!' : null,
       freezeHero: () => {
         isSwinging = false;
+        zip = null;
+        if (wallRun) endWallRun();
         webPressed = false;
         heroVelocity.set(0, 0, 0);
         invincibleT = Math.max(invincibleT, 1);
@@ -2243,6 +2450,14 @@ export default function SkylineSwingerMobile() {
     function onWebEnd(e) { e.stopPropagation(); webPressed = false; releaseSwing(); }
     function onJumpStart(e) {
       e.stopPropagation();
+      if (wallRun) {
+        const w = wallRun;
+        endWallRun();
+        heroVelocity.set(w.nx * 13, 11, w.nz * 13);
+        sfxJump();
+        showMsg('Wall jump!', 700);
+        return;
+      }
       if (isSwinging) {
         // swing-jump: release with an upward boost on top of current momentum — a skill move for extra height/distance
         releaseSwing();
@@ -2282,6 +2497,7 @@ export default function SkylineSwingerMobile() {
       if (k === 'e') { if (insideBuilding) useRequested = true; else webPressed = true; }
       if (k === 'f') fightRequested = true;
       if (k === 'q') doDodge();
+      if (k === 'r') startZip();
     }
     function onKeyUp(e) {
       const k = e.key.toLowerCase();
@@ -2364,6 +2580,13 @@ export default function SkylineSwingerMobile() {
         enter: (i = 0, via = 'street') => enterBuilding(enterables[i], via),
         setYaw: (v) => { yaw = v; }, setPitch: (v) => { pitch = v; },
         jump: () => { jumpPressed = true; setTimeout(() => { jumpPressed = false; }, 100); },
+        jumpBtn: () => onJumpStart(noop),
+        zip: () => startZip(),
+        web: (on) => { webPressed = on; if (!on) releaseSwing(); },
+        get wallRun() { return wallRun; },
+        get swinging() { return isSwinging; },
+        get anchor() { return swingAnchor; },
+        get vel() { return heroVelocity; },
         get inside() { return insideBuilding && insideBuilding.type; },
         get floor() { return currentFloor; },
         get onGround() { return onGround; },
@@ -2421,7 +2644,7 @@ export default function SkylineSwingerMobile() {
           }}>
             {isTouch
               ? <>Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Walk into a glowing doorway to go inside</>
-              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; F: fight &nbsp; Q: dodge &nbsp; 💀 on the map = boss</>}
+              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; R: zip &nbsp; F: fight &nbsp; Q: dodge &nbsp; 💀 on the map = boss</>}
           </div>
           <div style={{
             position: 'absolute', top: 10, right: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
@@ -2477,6 +2700,21 @@ export default function SkylineSwingerMobile() {
               borderRadius: '50%', background: 'rgba(255,255,255,0.5)', transition: 'transform 0.05s linear'
             }} />
           </div>
+
+          {/* Web-zip button */}
+          {!indoors && (
+            <div data-ui
+              onTouchStart={(e) => { e.stopPropagation(); zipRef.current && zipRef.current(); }}
+              onMouseDown={(e) => { e.stopPropagation(); zipRef.current && zipRef.current(); }}
+              style={{
+                position: 'absolute', right: 36, bottom: 212, width: 56, height: 56, borderRadius: '50%',
+                background: 'rgba(180,107,255,0.4)', border: '2px solid rgba(180,107,255,0.85)',
+                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, fontWeight: 'bold', userSelect: 'none', cursor: 'pointer'
+              }}>
+              ZIP{isTouch ? '' : ' (R)'}
+            </div>
+          )}
 
           {/* Jump button */}
           <div ref={jumpBtnRef} style={{
