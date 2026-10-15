@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { buildHero, OUTFITS } from './hero.js';
+import { loadRealHero } from './hero-real.js';
 import { createBosses, ARENA } from './bosses.js';
 import { mountChat } from './chat/chat-ui.js';
 import { createStory, MISSIONS, normalizeProgress } from './story.js';
@@ -1355,8 +1356,23 @@ export default function SkylineSwingerMobile() {
     const heroRig = buildHero(THREE);
     const hero = heroRig.root;
     const { shoulderL, shoulderR, hipL, hipR } = heroRig;
-    applyOutfitRef.current = (id, maskOn) => heroRig.applyOutfit(id, maskOn);
-    heroRig.applyOutfit(outfitRef.current.id, outfitRef.current.mask);
+    // the realistic hero model replaces the shape-built body once it has loaded
+    const realHero = loadRealHero(THREE, heroRig);
+    applyOutfitRef.current = (id, maskOn) => { heroRig.applyOutfit(id, maskOn); realHero.applyOutfit(id, maskOn); };
+    applyOutfitRef.current(outfitRef.current.id, outfitRef.current.mask);
+    // which animation the realistic hero should play right now
+    function heroAnimState() {
+      const sp = Math.hypot(heroVelocity.x, heroVelocity.z);
+      let mode = 'idle';
+      if (zip) mode = 'zip';
+      else if (wallRun) mode = 'wall';
+      else if (isSwinging) mode = 'swing';
+      else if (!onGround) mode = heroVelocity.y > 2 ? 'jump' : 'fall';
+      else if (sp > 9) mode = 'sprint';
+      else if (sp > 3.2) mode = 'jog';
+      else if (sp > 0.6) mode = 'walk';
+      return { mode, speed: sp, anchor: zip ? zip.to : isSwinging ? swingAnchor : null };
+    }
     hero.position.set(0, 1.5, 0);
     scene.add(hero);
 
@@ -1829,6 +1845,7 @@ export default function SkylineSwingerMobile() {
         spawnBurst(hero.position.clone(), 0xcfc7b3, 8, { speed: 3, life: 0.4, gravity: -25, size: 0.7 });
         triggerShake(0.1, 0.15);
         sfxLand();
+        realHero.oneShot('Jump_Land', 0.35);
       }
       onGroundPrev = onGround;
 
@@ -1903,8 +1920,9 @@ export default function SkylineSwingerMobile() {
     }
 
     const camRay = new THREE.Raycaster();
+    let debugCamDist = 0; // ?debug close-ups
     function updateCamera(dt, t) {
-      const camDist = insideBuilding ? 5 : isSwinging ? 8.5 : 5.5;
+      const camDist = debugCamDist || (insideBuilding ? 5 : isSwinging ? 8.5 : 5.5);
       const offset = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch) + 0.35,
@@ -2004,6 +2022,7 @@ export default function SkylineSwingerMobile() {
       setHitFlash(true);
       setTimeout(() => setHitFlash(false), 150);
       sfxDamage();
+      realHero.oneShot('Hit_Chest', 0.35);
       triggerShake(0.22, 0.28);
       if (knockDir && knockForce) {
         heroVelocity.x += knockDir.x * knockForce;
@@ -2398,6 +2417,7 @@ export default function SkylineSwingerMobile() {
         updateClouds(dt);
         updateCars(dt);
         updatePedestrians(dt, t);
+        realHero.update(dt, { mode: 'idle', speed: 0, anchor: null });
         if (!simDt) renderer.render(scene, camera);
         return;
       }
@@ -2412,10 +2432,12 @@ export default function SkylineSwingerMobile() {
           attackCooldownT = 0.45;
           punchT = PUNCH_DURATION;
           sfxPunch();
+          realHero.oneShot(Math.random() < 0.5 ? 'Punch_Jab' : 'Punch_Cross', 0.4);
           performAttack();
         }
       }
       updateHero(dt, t);
+      realHero.update(dt, heroAnimState());
       updateBuildingEntry(dt);
       updateInterior(dt);
       updateEnemies(dt, t);
@@ -2633,7 +2655,7 @@ export default function SkylineSwingerMobile() {
     if (import.meta.env.DEV || location.search.includes('debug')) {
       // test hook for driving the game from a desktop browser (add ?debug to the URL)
       window.__ss = {
-        hero, enterables, interiors, joystick, bosses, bossRoof, story, cars, pedestrians, buildings, roofParts, dodge: () => doDodge(),
+        hero, enterables, interiors, joystick, bosses, bossRoof, story, cars, pedestrians, buildings, roofParts, realHero, camera, dodge: () => doDodge(),
         punch: () => { fightRequested = true; },
         use: () => { useRequested = true; },
         get indoorBots() { return indoorBots; }, get indoorOrbs() { return indoorOrbs; }, enemies,
@@ -2653,6 +2675,7 @@ export default function SkylineSwingerMobile() {
         zip: () => startZip(),
         web: (on) => { webPressed = on; if (!on) releaseSwing(); },
         get wallRun() { return wallRun; },
+        camDist: (d) => { debugCamDist = d; },
         get swinging() { return isSwinging; },
         get anchor() { return swingAnchor; },
         get vel() { return heroVelocity; },

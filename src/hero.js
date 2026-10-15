@@ -14,7 +14,7 @@ export const OUTFITS = [
 ];
 
 // colours: main (chest/arms), second (legs/sides), accent (pattern + emblem)
-const SUIT_COLOURS = {
+export const SUIT_COLOURS = {
   classic: { main: '#c8202f', second: '#1d3f8f', accent: '#0d0d12', emblem: '#f2f2f2', mask: '#c8202f', lens: '#eef6ff', metal: 0.1 },
   midnight: { main: '#17181d', second: '#24262e', accent: '#9aa3b2', emblem: '#d9dee7', mask: '#17181d', lens: '#cfe8ff', metal: 0.3 },
   gold: { main: '#d9a826', second: '#f2f0e6', accent: '#8a6510', emblem: '#fff8d6', mask: '#d9a826', lens: '#1b1b1b', metal: 0.75 },
@@ -222,5 +222,5 @@ export function buildHero(THREE) {
   }
   applyOutfit('classic', true);
 
-  return { root, flip, shoulderL, shoulderR, hipL, hipR, elbows, knees, headGrp, applyOutfit };
+  return { root, flip, body, shoulderL, shoulderR, hipL, hipR, elbows, knees, headGrp, applyOutfit };
 }
