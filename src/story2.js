@@ -2115,9 +2115,11 @@ function missionFinale(ctx) {
     ],
     preFight: (F, fs) => {
       const kc = () => kai.group.position.clone().add(V(0, 2.2, 0));
+      // from the side, so Kai and the hero are both in the picture
       const kaiCam = () => {
         const f = V(hero.position.x - kai.group.position.x, 0, hero.position.z - kai.group.position.z).normalize();
-        return { pos: kc().addScaledVector(f, 4.5).add(V(0.8, 0.3, 0)), look: kc() };
+        const side = V(-f.z, 0, f.x);
+        return { pos: kc().addScaledVector(side, 5).addScaledVector(f, 2.2).add(V(0, 0.4, 0)), look: kc().addScaledVector(f, 1.5) };
       };
       const extras = fs.slice(1);
       return [
@@ -2144,15 +2146,27 @@ function missionFinale(ctx) {
     },
     winShots: (F, fs) => {
       const kc = () => kai.group.position.clone().add(V(0, 2.2, 0));
+      // from the side, so Kai and the hero are both in the picture
       const kaiCam = () => {
         const f = V(hero.position.x - kai.group.position.x, 0, hero.position.z - kai.group.position.z).normalize();
-        return { pos: kc().addScaledVector(f, 4.5).add(V(0.8, 0.3, 0)), look: kc() };
+        const side = V(-f.z, 0, f.x);
+        return { pos: kc().addScaledVector(side, 5).addScaledVector(f, 2.2).add(V(0, 0.4, 0)), look: kc().addScaledVector(f, 1.5) };
       };
       return [
-        { text: 'The Boss falls to one knee... and the mask cracks!', snap: true, cam: ctx.orbit(() => boss.group.position.clone().add(V(0, 1.2, 0)), 6, 2.5, 0, 1.0) },
+        { text: 'The Boss falls to one knee... and the mask cracks!', snap: true, cam: ctx.orbit(() => boss.group.position.clone().add(V(0, 1.2, 0)), 6, 2.5, 0, 1.0),
+          enter: () => { for (const f of fs) if (f !== boss) f.vanish(); } },
         { who: 'KAI', text: 'I... I lost. You really ARE the hero.', snap: true, cam: kaiCam,
           enter: () => {
+            for (const f of fs) if (f !== boss) f.vanish();
             kai.group.position.copy(boss.group.position);
+            // the hero steps back so they face each other
+            const away = V(hero.position.x - kai.group.position.x, 0, hero.position.z - kai.group.position.z);
+            if (away.lengthSq() < 0.01) away.set(0, 0, 1);
+            away.normalize();
+            hero.position.x = kai.group.position.x + away.x * 4;
+            hero.position.z = kai.group.position.z + away.z * 4;
+            hero.position.y = zone.y + 1.5; // (in case the last punch knocked them off the edge)
+            hero.rotation.y = Math.atan2(-away.x, -away.z);
             kai.group.rotation.y = Math.atan2(hero.position.x - kai.group.position.x, hero.position.z - kai.group.position.z);
             boss.vanish();
             kai.group.visible = true;
