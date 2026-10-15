@@ -361,6 +361,19 @@ export default function SkylineSwingerMobile() {
 
     // ---------- City ----------
     const buildings = [];
+    // Solid pieces on top of buildings (setback towers, stair huts, water
+    // tanks, antennas): walls stop you and you can stand on them, but they're
+    // kept out of `buildings` so missions don't treat them as whole buildings.
+    // Huts/tanks/antennas use invisible boxes the size of the visible shapes.
+    const roofParts = [];
+    const roofBoxMat = new THREE.MeshBasicMaterial({ visible: false });
+    function addRoofBox(x, bottom, z, w, h, d) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), roofBoxMat);
+      m.position.set(x, bottom + h / 2, z);
+      m.updateMatrixWorld(true);
+      roofParts.push(m);
+      return m;
+    }
     // { type, building, doorPos, streetSpawn, exitYaw, hutDoorPos, roofSpawn } — one per building
     const enterables = [];
     function buildingColor() {
@@ -425,6 +438,7 @@ export default function SkylineSwingerMobile() {
           antenna.position.set(b.position.x, h + 2, b.position.z);
           scene.add(antenna);
           b.userData.decor = [antenna];
+          b.userData.decorSolids = [addRoofBox(b.position.x, h, b.position.z, 0.4, 2 + antenna.geometry.parameters.height / 2, 0.4)];
         } else if (roofRand < 0.45) {
           const tankGrp = new THREE.Group();
           const tankMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.8, metalness: 0.1 });
@@ -437,6 +451,7 @@ export default function SkylineSwingerMobile() {
           tankGrp.position.set(b.position.x - w / 4, h + 0.6, b.position.z - d / 4);
           scene.add(tankGrp);
           b.userData.decor = [tankGrp];
+          b.userData.decorSolids = [addRoofBox(tankGrp.position.x, h, tankGrp.position.z, 2.4, 3.3, 2.4)];
         } else if (roofRand < 0.6 && h > 30) {
           // setback tier — a smaller second tower stacked on top, common on real skyscrapers
           const w2 = Math.min(w * (0.4 + Math.random() * 0.3), w - 6.2);
@@ -447,6 +462,9 @@ export default function SkylineSwingerMobile() {
           tier.castShadow = true;
           scene.add(tier);
           b.userData.decor = [tier];
+          tier.updateMatrixWorld(true);
+          roofParts.push(tier);
+          b.userData.decorSolids = [tier];
         }
       }
     }
@@ -589,6 +607,7 @@ export default function SkylineSwingerMobile() {
       const huts = instanced(new THREE.BoxGeometry(2.6, 3, 2.6), hutMat, entries,
         e => m4.compose(new THREE.Vector3(e.hutX, e.top + 1.5, e.hutZ), q.identity(), one));
       huts.castShadow = true;
+      for (const e of entries) addRoofBox(e.hutX, e.top, e.hutZ, 2.6, 3, 2.6);
       instanced(new THREE.PlaneGeometry(1.4, 2.3), hutDoorMat, entries,
         e => m4.compose(new THREE.Vector3(e.hutX, e.top + 1.15, e.hutZ - 1.32), q.setFromAxisAngle(up, Math.PI), one));
     }
@@ -639,6 +658,7 @@ export default function SkylineSwingerMobile() {
       let tallest = buildings[0];
       for (const b of buildings) if (b.geometry.parameters.height > tallest.geometry.parameters.height) tallest = b;
       for (const m of tallest.userData.decor || []) scene.remove(m);
+      for (const m of tallest.userData.decorSolids || []) roofParts.splice(roofParts.indexOf(m), 1);
       if (tallest.userData.trim) scene.remove(tallest.userData.trim); // would poke up through the pad
       const top = tallest.geometry.parameters.height + 0.06; // just above the roof so they don't flicker
       const half = 20;
@@ -711,7 +731,7 @@ export default function SkylineSwingerMobile() {
     // above its top) are left alone. Returns true if it was pushed.
     function pushOutOfBuildings(pos, r, feetY) {
       let pushed = false;
-      for (const b of buildings) {
+      for (const list of [buildings, roofParts]) for (const b of list) {
         const p = b.geometry.parameters;
         const top = b.position.y + p.height / 2, bottom = b.position.y - p.height / 2;
         if (feetY >= top - 0.5 || feetY + 2 <= bottom) continue;
@@ -907,7 +927,7 @@ export default function SkylineSwingerMobile() {
     scene.add(heroShadow);
     function getGroundHeightBelow(x, y, z) {
       let top = 0;
-      for (const b of buildings) {
+      for (const list of [buildings, roofParts]) for (const b of list) {
         const p = b.geometry.parameters;
         const halfW = p.width / 2, halfD = p.depth / 2;
         if (x > b.position.x - halfW && x < b.position.x + halfW && z > b.position.z - halfD && z < b.position.z + halfD) {
@@ -1490,7 +1510,7 @@ export default function SkylineSwingerMobile() {
       dir.applyEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
       const origin = hero.position.clone().add(new THREE.Vector3(0, -0.4, 0));
       const raycaster = new THREE.Raycaster(origin, dir, 0, 140);
-      const hits = raycaster.intersectObjects(buildings, false);
+      const hits = raycaster.intersectObjects([...buildings, ...roofParts], false);
       if (hits.length > 0) return hits[0].point;
       return origin.clone().add(dir.multiplyScalar(60)).setY(Math.max(30, origin.y + 15));
     }
@@ -1591,7 +1611,7 @@ export default function SkylineSwingerMobile() {
       if (best) return { to: best, roof: true };
       zipRay.set(hp, look);
       zipRay.far = 60;
-      const hit = zipRay.intersectObjects(buildings, false)[0];
+      const hit = zipRay.intersectObjects([...buildings, ...roofParts], false)[0];
       if (hit && hit.face && Math.abs(hit.face.normal.y) < 0.5) {
         const b = hit.object, p = b.geometry.parameters;
         const nx = Math.round(hit.face.normal.x), nz = Math.round(hit.face.normal.z);
@@ -1698,7 +1718,7 @@ export default function SkylineSwingerMobile() {
     function collideWalls() {
       const feet = hero.position.y - 1.5;
       lastWall = null;
-      for (const b of buildings) {
+      for (const list of [buildings, roofParts]) for (const b of list) {
         const p = b.geometry.parameters;
         const top = b.position.y + p.height / 2, bottom = b.position.y - p.height / 2;
         if (feet >= top - 2.5 || feet + 2.4 <= bottom) continue;
@@ -1721,7 +1741,7 @@ export default function SkylineSwingerMobile() {
 
     function checkGround() {
       onGround = hero.position.y <= 1.5001;
-      for (const b of buildings) {
+      for (const list of [buildings, roofParts]) for (const b of list) {
         const bb = new THREE.Box3().setFromObject(b);
         if (hero.position.x > bb.min.x - 0.5 && hero.position.x < bb.max.x + 0.5 &&
             hero.position.z > bb.min.z - 0.5 && hero.position.z < bb.max.z + 0.5) {
@@ -1795,7 +1815,8 @@ export default function SkylineSwingerMobile() {
       if (!insideBuilding) {
         collideWalls();
         // pushing into a wall (or swinging into one) starts a wall run
-        const nearDoor = enterables.some(e => Math.abs(e.doorPos.x - hero.position.x) < 3 && Math.abs(e.doorPos.z - hero.position.z) < 3 && hero.position.y < 4);
+        const nearDoor = enterables.some(e => (Math.abs(e.doorPos.x - hero.position.x) < 3 && Math.abs(e.doorPos.z - hero.position.z) < 3 && hero.position.y < 4)
+          || (Math.abs(e.hutDoorPos.x - hero.position.x) < 2.5 && Math.abs(e.hutDoorPos.z - hero.position.z) < 2.5 && Math.abs(e.hutDoorPos.y - hero.position.y) < 2));
         if (lastWall && !wallRun && wallCd <= 0 && !nearDoor) {
           const into = -(moveX * lastWall.nx + moveZ * lastWall.nz);
           if (into > 0.6 || (isSwinging && into > 0.2)) { startWallRun(lastWall); return; }
@@ -2062,6 +2083,7 @@ export default function SkylineSwingerMobile() {
           const lx = p.width / 2 - 0.6, lz = p.depth / 2 - 0.6;
           pos.x = Math.max(en.roof.position.x - lx, Math.min(en.roof.position.x + lx, pos.x));
           pos.z = Math.max(en.roof.position.z - lz, Math.min(en.roof.position.z + lz, pos.z));
+          pushOutOfBuildings(pos, 0.5, en.groundY);
         } else {
           const r = en.type === 'heavy' ? 0.8 : en.type === 'flyer' ? 0.9 : 0.5;
           const feet = en.type === 'flyer' ? pos.y - 0.5 : en.groundY;
@@ -2611,7 +2633,7 @@ export default function SkylineSwingerMobile() {
     if (import.meta.env.DEV || location.search.includes('debug')) {
       // test hook for driving the game from a desktop browser (add ?debug to the URL)
       window.__ss = {
-        hero, enterables, interiors, joystick, bosses, bossRoof, story, cars, pedestrians, buildings, dodge: () => doDodge(),
+        hero, enterables, interiors, joystick, bosses, bossRoof, story, cars, pedestrians, buildings, roofParts, dodge: () => doDodge(),
         punch: () => { fightRequested = true; },
         use: () => { useRequested = true; },
         get indoorBots() { return indoorBots; }, get indoorOrbs() { return indoorOrbs; }, enemies,
