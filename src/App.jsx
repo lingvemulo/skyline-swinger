@@ -1885,7 +1885,7 @@ export default function SkylineSwingerMobile() {
         const d = Math.hypot(px, py), lim = r - 9;
         if (d > lim) { px = px / d * lim; py = py / d * lim; }
         ctx.font = '16px sans-serif';
-        ctx.fillText('⭐', r + px, r + py);
+        ctx.fillText(m.icon || '⭐', r + px, r + py);
       }
       // the hero, pointing up
       ctx.fillStyle = '#fff';
@@ -1935,7 +1935,7 @@ export default function SkylineSwingerMobile() {
     });
     // ---------- Story mode (missions, phone calls, movie scenes) ----------
     const story = createStory(THREE, scene, {
-      hero, heroVel: heroVelocity, heroRig, camera, buildings, CITY_SIZE,
+      hero, heroVel: heroVelocity, heroRig, camera, buildings, CITY_SIZE, bossRoof,
       damagePlayer, spawnBurst, triggerShake, playTone, playNoise, showMsg,
       healHero: () => { playerHealth = 100; setHealth(100); },
       onUi: (u) => setStoryUi(u),
@@ -2020,10 +2020,11 @@ export default function SkylineSwingerMobile() {
         reportError('frame', err);
       }
     }
+    let simDt = 0; // ?debug fast-forward: fixed steps, no rendering
     function frame() {
       // danger sense slows time a little while a boss attack is incoming
       timeScale += ((dangerActive ? 0.55 : 1) - timeScale) * 0.15;
-      const dt = Math.min(clock.getDelta(), 0.05) * timeScale;
+      const dt = (simDt || Math.min(clock.getDelta(), 0.05)) * timeScale;
       const t = clock.getElapsedTime();
       story.update(dt, t);
       if (story.inCutscene) {
@@ -2032,7 +2033,7 @@ export default function SkylineSwingerMobile() {
         updateClouds(dt);
         updateCars(dt);
         updatePedestrians(dt, t);
-        renderer.render(scene, camera);
+        if (!simDt) renderer.render(scene, camera);
         return;
       }
       if (dodgeCooldown > 0) dodgeCooldown -= dt;
@@ -2071,7 +2072,7 @@ export default function SkylineSwingerMobile() {
         const horizSpeed = Math.hypot(heroVelocity.x, heroVelocity.z);
         speedFxRef.current.style.opacity = String(Math.min(0.35, Math.max(0, (horizSpeed - 15) * 0.025)));
       }
-      renderer.render(scene, camera);
+      if (!simDt) renderer.render(scene, camera);
     }
 
     // ---------- Touch input ----------
@@ -2261,6 +2262,14 @@ export default function SkylineSwingerMobile() {
         use: () => { useRequested = true; },
         get indoorBots() { return indoorBots; }, get indoorOrbs() { return indoorOrbs; }, enemies,
         heal: () => { playerHealth = 100; setHealth(100); },
+        // run the game for `secs` of game time right now (each=fn called every step)
+        sim: (secs, each) => {
+          simDt = 1 / 30;
+          for (let i = 0; i < secs * 30; i++) { frame(); if (each && each(i) === false) break; }
+          simDt = 0;
+          clock.getDelta();
+        },
+        get health() { return playerHealth; },
         enter: (i = 0, via = 'street') => enterBuilding(enterables[i], via),
         setYaw: (v) => { yaw = v; }, setPitch: (v) => { pitch = v; },
         jump: () => { jumpPressed = true; setTimeout(() => { jumpPressed = false; }, 100); },
@@ -2604,7 +2613,7 @@ export default function SkylineSwingerMobile() {
                     }}>
                     <span style={{ width: 22, textAlign: 'center', fontWeight: 'bold', color: m.henchman ? '#ff6b6b' : '#9fd3ff' }}>{n}</span>
                     <span style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 'bold' }}>{m.title}</div>
+                      <div style={{ fontSize: 13, fontWeight: 'bold' }}>{m.title === '???' && done ? 'The Boss' : m.title}</div>
                       <div style={{ fontSize: 10, opacity: 0.7 }}>{m.henchman ? '⚔️ ' : ''}{m.type}</div>
                     </span>
                     <span style={{ fontSize: 11, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{status}</span>

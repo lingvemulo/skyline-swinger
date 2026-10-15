@@ -12,184 +12,31 @@
 // (see createStory) and reports UI state back through api.onUi.
 
 import { ARENA } from './bosses.js';
+import { PART2_FACTORIES } from './story2.js';
+import { rand, pick, ease, angDiff, std, makePerson, makeNinja, makeGetawayCar, flameTexture, glowTexture } from './story-kit.js';
 
 export const MISSIONS = [
   { title: 'Fire on the Roof', type: 'Rescue', ready: true },
   { title: 'The Getaway Car', type: 'Chase', ready: true },
   { title: 'Shadow Ninja', type: 'Henchman fight', ready: true, henchman: true },
-  { title: 'Storm Signal', type: 'Race' },
-  { title: 'Tornado Alley', type: 'Rescue' },
-  { title: 'Storm Master', type: 'Henchman fight', henchman: true },
-  { title: 'Drone Heist', type: 'Chase' },
-  { title: 'Spare Parts', type: 'Collecting' },
-  { title: 'Mech Pilot', type: 'Henchman fight', henchman: true },
-  { title: 'Rooftop Blaze', type: 'Rescue' },
-  { title: 'Trail of Flames', type: 'Chase' },
-  { title: 'Fire Monster', type: 'Henchman fight', henchman: true },
-  { title: '???', type: 'Final battle' },
+  { title: 'Storm Signal', type: 'Race', ready: true },
+  { title: 'Tornado Alley', type: 'Rescue', ready: true },
+  { title: 'Storm Master', type: 'Henchman fight', henchman: true, ready: true },
+  { title: 'Drone Heist', type: 'Chase', ready: true },
+  { title: 'Spare Parts', type: 'Collecting', ready: true },
+  { title: 'Mech Pilot', type: 'Henchman fight', henchman: true, ready: true },
+  { title: 'Rooftop Blaze', type: 'Rescue', ready: true },
+  { title: 'Trail of Flames', type: 'Chase', ready: true },
+  { title: 'Fire Monster', type: 'Henchman fight', henchman: true, ready: true },
+  { title: '???', type: 'Final battle', ready: true },
 ];
 const READY = MISSIONS.filter(m => m.ready).length;
 const KAI = '📱 KAI';
 const NINJA = 'SHADOW NINJA';
 
-const rand = (a, b) => a + Math.random() * (b - a);
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const ease = (u) => u * u * (3 - 2 * u);
-const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
 export function normalizeProgress(p) {
-  return { next: (p && p.next) || 0, results: (p && p.results) || {} };
-}
-
-// ---------- models ----------
-function std(THREE, color, o = {}) { return new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...o }); }
-function joint(THREE, parent, x, y, z) {
-  const g = new THREE.Group();
-  g.position.set(x, y, z);
-  parent.add(g);
-  return g;
-}
-function part(THREE, parent, geo, mat, x = 0, y = 0, z = 0) {
-  const m = new THREE.Mesh(geo, mat);
-  m.position.set(x, y, z);
-  m.castShadow = true;
-  parent.add(m);
-  return m;
-}
-
-// civilian, feet at y = 0, ~1.75 tall
-function makePerson(THREE) {
-  const group = new THREE.Group();
-  const skin = std(THREE, pick([0xe8b98c, 0xc68642, 0x8d5524, 0xffdbac, 0xf1c27d]), { roughness: 0.8 });
-  const shirt = std(THREE, pick([0x3b6ea5, 0x8a3b3b, 0x3b8a5e, 0x6b5b95, 0xd08a2a, 0xc04880]));
-  const pants = std(THREE, pick([0x2b2b3a, 0x40403f, 0x333944, 0x4a3a2a]));
-  part(THREE, group, new THREE.CylinderGeometry(0.22, 0.26, 0.6, 8), shirt, 0, 1.1, 0);
-  part(THREE, group, new THREE.SphereGeometry(0.17, 10, 10), skin, 0, 1.58, 0);
-  const arm = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6);
-  const armL = joint(THREE, group, -0.28, 1.35, 0); part(THREE, armL, arm, shirt, 0, -0.25, 0);
-  const armR = joint(THREE, group, 0.28, 1.35, 0); part(THREE, armR, arm, shirt, 0, -0.25, 0);
-  const leg = new THREE.CylinderGeometry(0.09, 0.08, 0.65, 6);
-  const legL = joint(THREE, group, -0.11, 0.65, 0); part(THREE, legL, leg, pants, 0, -0.32, 0);
-  const legR = joint(THREE, group, 0.11, 0.65, 0); part(THREE, legR, leg, pants, 0, -0.32, 0);
-  return { group, armL, armR, legL, legR };
-}
-
-// Shadow Ninja, feet at y = 0, ~2.2 tall after scaling
-function makeNinja(THREE) {
-  const group = new THREE.Group();
-  const body = new THREE.Group();
-  group.add(body);
-  const suit = std(THREE, 0x16181e, { roughness: 0.55 });
-  const wrap = std(THREE, 0x343844, { roughness: 0.8 });
-  const scarfMat = std(THREE, 0xc8102e, { side: THREE.DoubleSide });
-  const eye = new THREE.MeshBasicMaterial({ color: 0xff3344 });
-  const steel = std(THREE, 0xdfe5ee, { metalness: 0.9, roughness: 0.2 });
-  const C = (a, b, l) => new THREE.CylinderGeometry(a, b, l, 10);
-
-  const legs = [-1, 1].map(sx => {
-    const hip = joint(THREE, body, sx * 0.13, 0.95, 0);
-    part(THREE, hip, C(0.11, 0.09, 0.5), suit, 0, -0.25, 0);
-    const knee = joint(THREE, hip, 0, -0.5, 0);
-    part(THREE, knee, C(0.09, 0.07, 0.45), wrap, 0, -0.22, 0);
-    part(THREE, knee, new THREE.BoxGeometry(0.13, 0.08, 0.28), suit, 0, -0.46, 0.05);
-    return { hip, knee };
-  });
-  part(THREE, body, new THREE.BoxGeometry(0.42, 0.2, 0.25), suit, 0, 0.98, 0);
-  part(THREE, body, C(0.21, 0.17, 0.62), suit, 0, 1.33, 0).scale.z = 0.75;
-  part(THREE, body, new THREE.BoxGeometry(0.44, 0.08, 0.3), scarfMat, 0, 1.08, 0); // red belt
-  const sheath = part(THREE, body, new THREE.BoxGeometry(0.07, 0.9, 0.05), wrap, 0, 1.35, -0.2);
-  sheath.rotation.z = 0.6;
-  const head = joint(THREE, body, 0, 1.78, 0);
-  part(THREE, head, new THREE.SphereGeometry(0.17, 14, 12), suit);
-  part(THREE, head, new THREE.BoxGeometry(0.28, 0.045, 0.06), eye, 0, 0.02, 0.14);
-  const scarf = joint(THREE, body, 0, 1.62, -0.12);
-  const tail = part(THREE, scarf, new THREE.PlaneGeometry(0.16, 0.9), scarfMat, 0.06, -0.45, 0);
-  tail.rotation.y = 0.2;
-  part(THREE, body, new THREE.TorusGeometry(0.15, 0.05, 6, 12), scarfMat, 0, 1.63, 0).rotation.x = Math.PI / 2;
-  const arms = [-1, 1].map(sx => {
-    const sh = joint(THREE, body, sx * 0.28, 1.56, 0);
-    part(THREE, sh, C(0.07, 0.06, 0.42), suit, 0, -0.21, 0);
-    const el = joint(THREE, sh, 0, -0.42, 0);
-    part(THREE, el, C(0.06, 0.05, 0.38), wrap, 0, -0.19, 0);
-    const hand = joint(THREE, el, 0, -0.42, 0);
-    part(THREE, hand, new THREE.SphereGeometry(0.065, 8, 6), suit);
-    return { sh, el, hand };
-  });
-  // sword in the right hand, blade pointing forward
-  const sword = new THREE.Group();
-  part(THREE, sword, C(0.025, 0.025, 0.25), wrap, 0, 0, 0).rotation.x = Math.PI / 2;
-  part(THREE, sword, new THREE.BoxGeometry(0.16, 0.03, 0.04), steel, 0, 0, 0.13);
-  part(THREE, sword, new THREE.BoxGeometry(0.035, 0.012, 1.0), steel, 0, 0, 0.65);
-  arms[1].hand.add(sword);
-  group.scale.setScalar(1.15);
-  return { group, body, legs, arms, head, scarf, flashMats: [suit, wrap] };
-}
-
-// black getaway car with the ninja at the wheel; faces +z, origin at the road
-function makeGetawayCar(THREE) {
-  const group = new THREE.Group();
-  const paint = std(THREE, 0x0d0f14, { metalness: 0.6, roughness: 0.3 });
-  const stripe = std(THREE, 0xc8102e, { metalness: 0.4, roughness: 0.4 });
-  const glass = std(THREE, 0x1a2230, { metalness: 0.5, roughness: 0.2 });
-  const tyre = std(THREE, 0x111111, { roughness: 0.9 });
-  part(THREE, group, new THREE.BoxGeometry(2.3, 0.7, 4.6), paint, 0, 0.65, 0);
-  part(THREE, group, new THREE.BoxGeometry(0.5, 0.72, 4.62), stripe, 0, 0.66, 0);
-  part(THREE, group, new THREE.BoxGeometry(1.9, 0.55, 2.1), glass, 0, 1.25, -0.3);
-  part(THREE, group, new THREE.BoxGeometry(2.3, 0.12, 0.5), paint, 0, 1.15, -2.2); // spoiler
-  const wheels = [];
-  for (const [x, z] of [[-1.1, 1.5], [1.1, 1.5], [-1.1, -1.5], [1.1, -1.5]]) {
-    const w = part(THREE, group, new THREE.CylinderGeometry(0.42, 0.42, 0.3, 14), tyre, x, 0.42, z);
-    w.rotation.z = Math.PI / 2;
-    wheels.push(w);
-  }
-  const head = new THREE.MeshBasicMaterial({ color: 0xfff4c8 });
-  const tail = new THREE.MeshBasicMaterial({ color: 0xff2030 });
-  for (const x of [-0.75, 0.75]) {
-    part(THREE, group, new THREE.BoxGeometry(0.45, 0.16, 0.05), head, x, 0.75, 2.31);
-    part(THREE, group, new THREE.BoxGeometry(0.45, 0.16, 0.05), tail, x, 0.75, -2.31);
-  }
-  // the driver: black head with the glowing red eye band
-  const driver = new THREE.Group();
-  part(THREE, driver, new THREE.SphereGeometry(0.22, 12, 10), paint);
-  part(THREE, driver, new THREE.BoxGeometry(0.36, 0.06, 0.06), new THREE.MeshBasicMaterial({ color: 0xff3344 }), 0, 0.02, 0.19);
-  driver.position.set(-0.45, 1.45, 0.1);
-  group.add(driver);
-  return { group, wheels, driver };
-}
-
-// tall flame: red-orange outside, yellow-white core (normal blending so it
-// stays orange in front of bright windows)
-function flameTexture(THREE) {
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 128;
-  const ctx = c.getContext('2d');
-  const blob = (cy, ry, rx, stops) => {
-    const g = ctx.createRadialGradient(32, cy, 0, 32, cy, ry);
-    stops.forEach(([o, col]) => g.addColorStop(o, col));
-    ctx.save();
-    ctx.translate(32, cy);
-    ctx.scale(rx / ry, 1);
-    ctx.translate(-32, -cy);
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(32, cy, ry, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  };
-  blob(74, 54, 30, [[0, 'rgba(255,90,10,0.95)'], [0.6, 'rgba(230,40,0,0.6)'], [1, 'rgba(160,20,0,0)']]);
-  blob(84, 36, 20, [[0, 'rgba(255,200,40,1)'], [0.7, 'rgba(255,120,10,0.7)'], [1, 'rgba(255,90,0,0)']]);
-  blob(94, 18, 11, [[0, 'rgba(255,255,210,1)'], [1, 'rgba(255,220,90,0)']]);
-  return new THREE.CanvasTexture(c);
-}
-
-function glowTexture(THREE, inner, outer) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, inner);
-  g.addColorStop(1, outer);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(c);
+  return { next: (p && p.next) || 0, results: (p && p.results) || {}, prize: !!(p && p.prize) };
 }
 
 // ---------- system ----------
@@ -260,6 +107,8 @@ export function createStory(THREE, scene, api) {
   beacon.visible = false;
   scene.add(beacon);
   let target = null;
+  let extraMarkers = []; // e.g. ⚙️ parts or 🔥 roofs on the mini-map
+  function setMarkers(list) { extraMarkers = list || []; }
   function setTarget(p) {
     target = p ? p.clone() : null;
     beacon.visible = !!p;
@@ -351,7 +200,9 @@ export function createStory(THREE, scene, api) {
 
   // ---------- mission flow ----------
   const ctx = {
-    THREE, scene, api, hero, V, puff, setHud, setBoss, setDanger, setTarget, orbit, phone, heroC,
+    THREE, scene, api, hero, V, puff, setHud, setBoss, setDanger, setTarget, setMarkers, orbit, phone, phoneCam, heroC,
+    tex: { fire: fireTex, smoke: smokeTex, darkSmoke: darkSmokeTex },
+    results: () => progress.results,
     play: playScene,
     finish(result, shots) {
       if (!mission || mission.ending) return;
@@ -374,12 +225,12 @@ export function createStory(THREE, scene, api) {
   function endMission() {
     if (mission) mission.cleanup();
     mission = null;
-    setHud(null); setBoss(null); setDanger(false); setTarget(null);
+    setHud(null); setBoss(null); setDanger(false); setTarget(null); setMarkers([]);
     api.setBossesPaused(false);
     freeT = 0;
   }
   function record(n, result) {
-    const p = { next: progress.next, results: { ...progress.results } };
+    const p = { next: progress.next, results: { ...progress.results }, prize: progress.prize };
     if (n - 1 === p.next) p.next = n;
     if (result === 'won' || result === 'lost') {
       p.results[n] = p.results[n] === 'won' || result === 'won' ? 'won' : 'lost';
@@ -389,10 +240,18 @@ export function createStory(THREE, scene, api) {
     api.playTone({ freq: 660, duration: 0.15, type: 'triangle', gain: 0.12 });
     api.playTone({ freq: 880, duration: 0.15, type: 'triangle', gain: 0.12, delay: 0.15 });
     api.playTone({ freq: 1320, duration: 0.35, type: 'triangle', gain: 0.12, delay: 0.3 });
+    if (n === MISSIONS.length && result === 'won') {
+      // the end of the story: the 1 trillion coin prize (only paid once)
+      const first = !p.prize;
+      p.prize = true;
+      progress = p;
+      api.setProgress(p);
+      if (first && api.onStoryComplete) api.onStoryComplete();
+      banner('STORY COMPLETE! 🏆', first ? '🤑 You won 1,000,000,000,000 coins!' : 'You beat the Boss again!', 8);
+      return;
+    }
     const title = result === 'won' ? 'YOU WON! 🏆' : result === 'lost' ? 'YOU LOST... BUT THE STORY GOES ON!' : 'MISSION COMPLETE! ✅';
-    const sub = p.next >= READY && n === READY
-      ? 'TO BE CONTINUED... Missions 4-13 are coming in Part 2!'
-      : p.next < READY && n === p.next ? 'Kai will call you soon about the next mission 📱' : `Mission ${n}: ${MISSIONS[n - 1].title}`;
+    const sub = p.next < READY && n === p.next ? 'Kai will call you soon about the next mission 📱' : `Mission ${n}: ${MISSIONS[n - 1].title}`;
     banner(title, sub, 6);
   }
   function startMission(i) {
@@ -1130,12 +989,12 @@ export function createStory(THREE, scene, api) {
     };
   }
 
-  const FACTORIES = [missionFire, missionChase, missionNinja];
+  const FACTORIES = [missionFire, missionChase, missionNinja, ...PART2_FACTORIES];
 
   return {
     get inCutscene() { return !!cut; },
     get active() { return !!mission; },
-    get markers() { return target ? [{ x: target.x, z: target.z }] : []; },
+    get markers() { return [...(target ? [{ x: target.x, z: target.z, icon: '⭐' }] : []), ...extraMarkers]; },
     get progress() { return progress; },
     get mission() { return mission; }, // for the ?debug test hook
     update(dt, t) {
