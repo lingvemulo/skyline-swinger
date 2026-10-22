@@ -14,6 +14,8 @@ export default function SkylineSwingerMobile() {
   const webBtnRef = useRef(null);
   const jumpBtnRef = useRef(null);
   const zipRef = useRef(null);
+  const zoomRef = useRef(null); // { by(f), scope() } from the game loop
+  const [scopeZoom, setScopeZoom] = useState(0); // 0 = binoculars off, else the magnification shown
   const fightBtnRef = useRef(null);
   const speedFxRef = useRef(null);
   const audioCtxRef = useRef(null);
@@ -1222,6 +1224,7 @@ export default function SkylineSwingerMobile() {
 
     function enterBuilding(ent, via) {
       zip = null;
+      setScope(false);
       if (wallRun) endWallRun();
       clearInterior(currentEnterable);
       currentEnterable = ent;
@@ -1569,6 +1572,7 @@ export default function SkylineSwingerMobile() {
     }
     function startSwing() {
       if (isSwinging) return;
+      setScope(false);
       if (wallRun) endWallRun();
       zip = null;
       const point = findAnchor() || raycastFromCamera();
@@ -1639,6 +1643,7 @@ export default function SkylineSwingerMobile() {
     }
     function startZip() {
       if (insideBuilding || zip || story.inCutscene) return;
+      setScope(false);
       const target = findZipTarget();
       if (!target) { showMsg('Nothing to zip to — look at a building!', 1200); return; }
       if (wallRun) endWallRun();
@@ -1783,8 +1788,8 @@ export default function SkylineSwingerMobile() {
 
       // smooth the raw joystick input so movement eases in/out instead of snapping
       const kb = keyAxis();
-      const targetJoyX = joystick.active ? joystick.x : kb.x;
-      const targetJoyY = joystick.active ? joystick.y : kb.y;
+      const targetJoyX = scope ? 0 : joystick.active ? joystick.x : kb.x;
+      const targetJoyY = scope ? 0 : joystick.active ? joystick.y : kb.y;
       const smoothing = 1 - Math.pow(0.001, dt); // frame-rate independent lerp
       smoothedJoy.x += (targetJoyX - smoothedJoy.x) * smoothing;
       smoothedJoy.y += (targetJoyY - smoothedJoy.y) * smoothing;
@@ -1921,8 +1926,53 @@ export default function SkylineSwingerMobile() {
 
     const camRay = new THREE.Raycaster();
     let debugCamDist = 0; // ?debug close-ups
+    // ---------- Zoom: camera closer/further, and binoculars ----------
+    // zoomLevel scales the camera distance (small = close up). In binoculars
+    // mode the camera looks out of the hero's eyes and zoom narrows the view.
+    let zoomLevel = 1;
+    try { zoomLevel = Math.max(0.45, Math.min(2.2, parseFloat(localStorage.getItem('skyline-swinger-zoom')) || 1)); } catch (e) { /* private mode */ }
+    let scope = null; // { fov } while looking through the binoculars
+    const SCOPE_MAX_FOV = 50;
+    function zoomBy(f) {
+      if (scope) {
+        scope.fov = Math.max(5, Math.min(SCOPE_MAX_FOV, scope.fov / f));
+        setScopeZoom(Math.round((72 / scope.fov) * 10) / 10);
+        return;
+      }
+      zoomLevel = Math.max(0.45, Math.min(2.2, zoomLevel / f));
+      try { localStorage.setItem('skyline-swinger-zoom', String(zoomLevel)); } catch (e) { /* private mode */ }
+    }
+    function setScope(on) {
+      if (on && (insideBuilding || story.inCutscene)) return;
+      if (on && !scope) {
+        scope = { fov: 30 };
+        isSwinging = false;
+        if (wallRun) endWallRun();
+        zip = null;
+        hero.visible = false; // looking out of the hero's eyes
+        setScopeZoom(Math.round((72 / scope.fov) * 10) / 10);
+        playTone({ freq: 900, freqEnd: 1300, duration: 0.08, type: 'sine', gain: 0.06 });
+      } else if (!on && scope) {
+        scope = null;
+        hero.visible = true;
+        camInit = false;
+        setScopeZoom(0);
+      }
+    }
+    zoomRef.current = { by: zoomBy, scope: () => setScope(!scope) };
+    // looking around is slower when zoomed in, so you can aim
+    const lookScale = () => (scope ? scope.fov / 72 : 1);
     function updateCamera(dt, t) {
-      const camDist = debugCamDist || (insideBuilding ? 5 : isSwinging ? 8.5 : 5.5);
+      if (scope) {
+        const eye = hero.position.clone().add(new THREE.Vector3(0, 0.85, 0));
+        const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+        camera.position.copy(eye);
+        camera.lookAt(eye.add(dir));
+        camera.fov += (scope.fov - camera.fov) * Math.min(1, dt * 10);
+        camera.updateProjectionMatrix();
+        return;
+      }
+      const camDist = debugCamDist || (insideBuilding ? 5 : isSwinging ? 8.5 : 5.5) * (insideBuilding ? Math.min(1, zoomLevel) : zoomLevel);
       const offset = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch) + 0.35,
@@ -2327,6 +2377,7 @@ export default function SkylineSwingerMobile() {
       setProgress: (p) => setSave(s => ({ ...s, story: p })),
       busyReason: () => insideBuilding ? 'Go outside first!' : bosses.inFight ? 'Finish the boss fight first!' : null,
       freezeHero: () => {
+        setScope(false);
         isSwinging = false;
         zip = null;
         if (wallRun) endWallRun();
@@ -2484,15 +2535,28 @@ export default function SkylineSwingerMobile() {
           joystick.originY = t.clientY;
           joystick.x = 0;
           joystick.y = 0;
-        } else if (!look.active) {
+        } else if (!look.active && !pinch) {
           look.active = true;
           look.id = t.identifier;
           look.lastX = t.clientX;
           look.lastY = t.clientY;
+        } else if (look.active && !pinch) {
+          // second finger on the look side: pinch to zoom
+          pinch = { a: look.id, b: t.identifier, d: Math.hypot(t.clientX - look.lastX, t.clientY - look.lastY), pts: { [look.id]: [look.lastX, look.lastY], [t.identifier]: [t.clientX, t.clientY] } };
+          look.active = false;
+          look.id = null;
         }
       }
     }
+    let pinch = null;
     function handleTouchMove(e) {
+      if (pinch) {
+        for (const t of e.changedTouches) if (pinch.pts[t.identifier]) pinch.pts[t.identifier] = [t.clientX, t.clientY];
+        const [ax, ay] = pinch.pts[pinch.a], [bx, by] = pinch.pts[pinch.b];
+        const d = Math.hypot(ax - bx, ay - by);
+        if (pinch.d > 10 && d > 10) zoomBy(d / pinch.d); // fingers apart = zoom in
+        pinch.d = d;
+      }
       for (const t of e.changedTouches) {
         if (joystick.active && t.identifier === joystick.id) {
           let dx = t.clientX - joystick.originX;
@@ -2507,8 +2571,8 @@ export default function SkylineSwingerMobile() {
         } else if (look.active && t.identifier === look.id) {
           const dx = t.clientX - look.lastX;
           const dy = t.clientY - look.lastY;
-          yaw -= dx * 0.0045;
-          pitch -= dy * 0.0045;
+          yaw -= dx * 0.0045 * lookScale();
+          pitch -= dy * 0.0045 * lookScale();
           pitch = Math.max(-1.2, Math.min(1.0, pitch));
           look.lastX = t.clientX;
           look.lastY = t.clientY;
@@ -2528,6 +2592,7 @@ export default function SkylineSwingerMobile() {
           look.active = false;
           look.id = null;
         }
+        if (pinch && (t.identifier === pinch.a || t.identifier === pinch.b)) pinch = null;
       }
     }
 
@@ -2587,6 +2652,7 @@ export default function SkylineSwingerMobile() {
       if (k === 'f') fightRequested = true;
       if (k === 'q') doDodge();
       if (k === 'r') startZip();
+      if (k === 'b') setScope(!scope);
     }
     function onKeyUp(e) {
       const k = e.key.toLowerCase();
@@ -2611,8 +2677,8 @@ export default function SkylineSwingerMobile() {
     }
     function onMouseMove(e) {
       if (!mouseLook.active) return;
-      yaw -= (e.clientX - mouseLook.lastX) * 0.0045;
-      pitch -= (e.clientY - mouseLook.lastY) * 0.0045;
+      yaw -= (e.clientX - mouseLook.lastX) * 0.0045 * lookScale();
+      pitch -= (e.clientY - mouseLook.lastY) * 0.0045 * lookScale();
       pitch = Math.max(-1.2, Math.min(1.0, pitch));
       mouseLook.lastX = e.clientX;
       mouseLook.lastY = e.clientY;
@@ -2631,6 +2697,12 @@ export default function SkylineSwingerMobile() {
     container.addEventListener('touchend', handleTouchEnd, { passive: true });
     container.addEventListener('touchcancel', handleTouchEnd, { passive: true });
     container.addEventListener('mousedown', onMouseDown);
+    function onWheel(e) {
+      if (e.target.closest && e.target.closest('[data-ui]')) return;
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+    }
+    container.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('keydown', onKeyDown);
@@ -2676,6 +2748,10 @@ export default function SkylineSwingerMobile() {
         web: (on) => { webPressed = on; if (!on) releaseSwing(); },
         get wallRun() { return wallRun; },
         camDist: (d) => { debugCamDist = d; },
+        get zoomLevel() { return zoomLevel; },
+        get scope() { return scope; },
+        zoomBy: (f) => zoomBy(f),
+        setScope: (on) => setScope(on),
         get swinging() { return isSwinging; },
         get anchor() { return swingAnchor; },
         get vel() { return heroVelocity; },
@@ -2694,6 +2770,7 @@ export default function SkylineSwingerMobile() {
       container.removeEventListener('touchend', handleTouchEnd);
       container.removeEventListener('touchcancel', handleTouchEnd);
       container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('wheel', onWheel);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('keydown', onKeyDown);
@@ -2767,6 +2844,44 @@ export default function SkylineSwingerMobile() {
               ))}
             </div>
           </div>
+
+          {/* Zoom: + / − and binoculars, in a column under the full screen button */}
+          {!indoors && [['+', 'Zoom in', () => zoomRef.current && zoomRef.current.by(1.25)],
+            ['−', 'Zoom out', () => zoomRef.current && zoomRef.current.by(0.8)],
+            ['🔭', 'Binoculars', () => zoomRef.current && zoomRef.current.scope()]].map(([label, title, fn], i) => (
+            <div key={title} data-ui title={title}
+              onTouchStart={(e) => { e.stopPropagation(); e.preventDefault(); fn(); }}
+              onMouseDown={(e) => { e.stopPropagation(); fn(); }}
+              style={{
+                position: 'absolute', top: 112 + i * 46, right: shortScreen ? 104 : 140, width: 40, height: 40, borderRadius: 10, cursor: 'pointer', zIndex: 6,
+                background: i === 2 && scopeZoom ? 'rgba(94,242,255,0.5)' : 'rgba(0,0,0,0.45)', border: '2px solid rgba(255,255,255,0.35)', color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: i === 2 ? 19 : 24, fontWeight: 'bold', userSelect: 'none'
+              }}>
+              {label}
+            </div>
+          ))}
+          {scopeZoom > 0 && (
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+              <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0 }}>
+                <defs>
+                  <mask id="ssScope">
+                    <rect width="100%" height="100%" fill="white" />
+                    <circle cx="38%" cy="50%" r="27%" fill="black" />
+                    <circle cx="62%" cy="50%" r="27%" fill="black" />
+                  </mask>
+                </defs>
+                <rect width="100%" height="100%" fill="rgba(0,0,0,0.93)" mask="url(#ssScope)" />
+                <line x1="50%" y1="44%" x2="50%" y2="56%" stroke="rgba(255,255,255,0.7)" strokeWidth="2" />
+                <line x1="47%" y1="50%" x2="53%" y2="50%" stroke="rgba(255,255,255,0.7)" strokeWidth="2" />
+              </svg>
+              <div style={{
+                position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', color: '#5ef2ff',
+                fontWeight: 'bold', fontSize: 15, textShadow: '0 1px 3px #000', letterSpacing: 1
+              }}>
+                🔭 x{scopeZoom} &nbsp;·&nbsp; {isTouch ? 'pinch or + / −' : 'wheel or + / −'} to zoom &nbsp;·&nbsp; {isTouch ? 'tap 🔭' : 'B'} to stop
+              </div>
+            </div>
+          )}
 
           {/* Full screen button */}
           {!isStandalone && (
