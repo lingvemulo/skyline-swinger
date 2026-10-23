@@ -1667,7 +1667,6 @@ export default function SkylineSwingerMobile() {
     function endWallRun() {
       wallRun = null;
       wallCd = 0.4;
-      heroRig.flip.rotation.x = 0;
     }
     function updateZipWall(dt, t, moveX, moveZ) {
       if (zip) {
@@ -1711,7 +1710,11 @@ export default function SkylineSwingerMobile() {
       hipR.rotation.x = -0.7 - Math.sin(ph) * 0.8;
       shoulderL.rotation.x = -2.4 + Math.sin(ph) * 0.6;
       shoulderR.rotation.x = -2.4 - Math.sin(ph) * 0.6;
-      heroRig.flip.rotation.x = -0.25;
+      // run up the wall like it's the floor: body sticks straight out from the
+      // wall, feet on the bricks, head pointing away (eases in over ~0.2s)
+      const k = Math.min(1, dt * 12);
+      heroRig.flip.rotation.x += (-Math.PI / 2 - heroRig.flip.rotation.x) * k;
+      heroRig.flip.position.z += (-1.0 - heroRig.flip.position.z) * k;
       const feet = hero.position.y - 1.5;
       if (feet >= w.top - 0.3) {
         // made it to the top: hop over onto the roof
@@ -1981,6 +1984,12 @@ export default function SkylineSwingerMobile() {
       // body centre is ~0.3 below hero.position (see the hero model note)
       const desiredPos = hero.position.clone().add(offset).add(new THREE.Vector3(0, -0.4, 0));
       const desiredLookAt = hero.position.clone().add(new THREE.Vector3(0, -0.3, 0));
+      if (wallRun) {
+        // wall run: camera below and behind his back, looking up the wall
+        const out = new THREE.Vector3(wallRun.nx, 0, wallRun.nz);
+        desiredPos.copy(hero.position).addScaledVector(out, 2.2 + camDist * 0.35).add(new THREE.Vector3(0, -camDist * 0.9, 0));
+        desiredLookAt.copy(hero.position).addScaledVector(out, 1.0).add(new THREE.Vector3(0, 2.5, 0));
+      }
 
       // subtle head-bob while running on the ground adds a tactile, physical feel
       const horizSpeed = Math.hypot(heroVelocity.x, heroVelocity.z);
@@ -2428,8 +2437,12 @@ export default function SkylineSwingerMobile() {
       if (flipT > 0) {
         flipT = Math.max(0, flipT - dt);
         heroRig.flip.rotation.x = -(1 - flipT / 0.55) * Math.PI * 2;
-      } else {
-        heroRig.flip.rotation.x = 0;
+      } else if (!wallRun) {
+        // ease back upright (after a wall run) instead of snapping
+        const k = Math.min(1, dt * 10);
+        heroRig.flip.rotation.x += (0 - heroRig.flip.rotation.x) * k;
+        heroRig.flip.position.z += (0 - heroRig.flip.position.z) * k;
+        if (Math.abs(heroRig.flip.rotation.x) < 0.002) heroRig.flip.rotation.x = 0;
       }
       senseGroup.visible = dangerActive;
       if (dangerActive) {
