@@ -1,3 +1,5 @@
+import { peopleReady, makeRealPerson, randomCivilian } from './people.js';
+
 // Shared pieces for story mode: small math helpers, models (civilian, Shadow
 // Ninja, getaway car) and canvas textures. Used by story.js and story2.js.
 
@@ -36,7 +38,23 @@ export function makePerson(THREE) {
   const leg = new THREE.CylinderGeometry(0.09, 0.08, 0.65, 6);
   const legL = joint(THREE, group, -0.11, 0.65, 0); part(THREE, legL, leg, pants, 0, -0.32, 0);
   const legR = joint(THREE, group, 0.11, 0.65, 0); part(THREE, legR, leg, pants, 0, -0.32, 0);
-  return { group, armL, armR, legL, legR };
+  // realistic version (when loaded): the simple shapes above are hidden, and
+  // update(dt, state) plays the matching animation
+  const real = peopleReady() ? makeRealPerson(randomCivilian()) : null;
+  if (real) {
+    for (const c of [...group.children]) c.visible = false;
+    group.add(real.group);
+  }
+  const STATE = { wait: ['Idle_Loop', 0, 1], hop: ['Jump_Loop', 1, 0], fall: ['Jump_Loop', 1, 0], safe: ['Dance_Loop', 0, 0], stand: ['Idle_Loop', 0, 0], walk: ['Walk_Loop', 0, 0], cheer: ['Dance_Loop', 0, 0] };
+  function update(dt, state = 'stand') {
+    if (!real) return;
+    const [clip, up, wave] = STATE[state] || STATE.stand;
+    real.play(clip);
+    real.armsUp += (up - real.armsUp) * Math.min(1, dt * 8);
+    real.wave += (wave - real.wave) * Math.min(1, dt * 8);
+    real.update(dt);
+  }
+  return { group, armL, armR, legL, legR, real, update };
 }
 
 // Shadow Ninja, feet at y = 0, ~2.2 tall after scaling

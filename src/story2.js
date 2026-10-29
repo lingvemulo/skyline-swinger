@@ -8,6 +8,7 @@
 
 import { ARENA } from './bosses.js';
 import { rand, pick, angDiff, std, joint, part, makePerson, makeNinja } from './story-kit.js';
+import { peopleReady, makeRealPerson } from './people.js';
 
 const KAI = '📱 KAI';
 const YOU = '🦸 YOU';
@@ -102,6 +103,7 @@ function rescuers(ctx, root, spots) {
     anim(dt, t) {
       for (const p of people) {
         const g = p.group;
+        if (p.update) p.update(dt, p.state);
         if (p.state === 'wait') {
           p.armR.rotation.z = 2.5 + Math.sin(t * 7 + p.ph) * 0.4;
           p.armL.rotation.z = -2.5 - Math.sin(t * 7 + p.ph) * 0.4;
@@ -983,7 +985,20 @@ function makeBossSuit(THREE) {
 }
 
 // Kai, your best friend: teal hoodie, jeans and a phone in hand (~hero size)
+const KAI_LOOK = {
+  sex: 'male', skin: '#c18a63', hair: 'buzzed', hairColour: '#1a1410', scale: 1.3, slim: 0.5, idle: 'Idle_Talking_Loop',
+  outfit: { mode: 'clothes', top: '#1e9e8a', legs: '#2b4a7a', shoes: '#f2f2f2' },
+};
 function makeKai(THREE) {
+  const real = peopleReady() ? makeRealPerson(KAI_LOOK) : null;
+  if (real) {
+    const phone = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.13, 0.015), std(THREE, 0x111111));
+    const hand = real.bone('hand_r');
+    if (hand) { phone.position.set(0, 0.08, 0.03); phone.scale.setScalar(1 / 1.3); hand.add(phone); }
+    real.play('Idle_Talking_Loop', { fade: 0 });
+    // armR is a stand-in for the old model's joint (the story code still pokes it)
+    return { group: real.group, armR: new THREE.Group(), armL: new THREE.Group(), real, update: (dt) => real.update(dt) };
+  }
   const p = makePerson(THREE);
   const hoodie = std(THREE, 0x1e9e8a, { roughness: 0.85 });
   const jeans = std(THREE, 0x2b4a7a, { roughness: 0.85 });
@@ -2185,6 +2200,7 @@ function missionFinale(ctx) {
       sky.anim(dt);
       if (kai.group.visible) {
         kai.armR.rotation.x = -0.9 + Math.sin(t * 2) * 0.05; // looking at the phone
+        if (kai.update) kai.update(dt);
       }
     },
     cleanup: () => scene.remove(root),

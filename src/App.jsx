@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { buildHero, OUTFITS } from './hero.js';
 import { loadRealHero } from './hero-real.js';
+import { loadPeople, peopleReady, makeRealPerson, randomCivilian } from './people.js';
 import { createBosses, ARENA } from './bosses.js';
 import { mountChat } from './chat/chat-ui.js';
 import { createStory, MISSIONS, normalizeProgress } from './story.js';
@@ -861,6 +862,28 @@ export default function SkylineSwingerMobile() {
 
       return { grp, hipL: hipPL, hipR: hipPR, shoulderL: shoulderPL, shoulderR: shoulderPR };
     }
+    // Realistic people (smooth mode): each simple person gets a realistic twin
+    // made the first time they're near the hero; near = realistic, far = the
+    // cheap shape-built version.
+    loadPeople(THREE);
+    function realLOD(p, dt, near, clip, speed = 1) {
+      if (near && !p.real && peopleReady()) {
+        p.real = makeRealPerson(p.spec);
+        if (p.real) {
+          p.simpleParts = [...p.grp.children];
+          if (p.realOffset) p.real.group.position.y = p.realOffset;
+          p.grp.add(p.real.group);
+        }
+      }
+      const showReal = near && !!p.real;
+      if (p.simpleParts) for (const c of p.simpleParts) c.visible = !showReal;
+      if (p.real) {
+        p.real.group.visible = showReal;
+        if (showReal) { p.real.play(clip, { speed }); p.real.update(dt); }
+      }
+    }
+    const REAL_NEAR = 70;
+
     const pedestrians = [];
     for (let i = 0; i < 14; i++) {
       let x = 0, z = 0, tries = 0;
@@ -874,7 +897,7 @@ export default function SkylineSwingerMobile() {
       const ped = makePedestrian();
       ped.grp.position.set(x, 0, z);
       scene.add(ped.grp);
-      pedestrians.push({ ...ped, target: new THREE.Vector3(x, 0, z), speed: 1 + Math.random() * 0.8, wanderTimer: Math.random() * 3 });
+      pedestrians.push({ ...ped, spec: randomCivilian(), target: new THREE.Vector3(x, 0, z), speed: 1 + Math.random() * 0.8, wanderTimer: Math.random() * 3 });
     }
     function updatePedestrians(dt, t) {
       for (const p of pedestrians) {
@@ -907,6 +930,8 @@ export default function SkylineSwingerMobile() {
           p.hipL.rotation.x *= 0.9; p.hipR.rotation.x *= 0.9;
           p.shoulderL.rotation.x *= 0.9; p.shoulderR.rotation.x *= 0.9;
         }
+        const near = !insideBuilding && p.grp.position.distanceToSquared(hero.position) < REAL_NEAR * REAL_NEAR;
+        realLOD(p, dt, near, dist > 0.3 ? 'Walk_Loop' : 'Idle_Loop', p.speed / 1.3);
       }
     }
 
@@ -1100,12 +1125,15 @@ export default function SkylineSwingerMobile() {
         if (mode === 'walk') p.grp.lookAt(arg[0], p.grp.position.y, arg[1]);
         else p.grp.rotation.y = arg;
         it.group.add(p.grp); // shown/hidden with its building
-        indoorPeople.push({ ...p, mode, from: new THREE.Vector3(x, y, z), to: mode === 'walk' ? new THREE.Vector3(arg[0], y, arg[1]) : null, leg: 1, phase: Math.random() * 6 });
+        indoorPeople.push({ ...p, mode, spec: randomCivilian(), realOffset: mode === 'sit' ? 0.3 : 0,
+          idleClip: mode === 'sit' ? 'Sitting_Idle_Loop' : Math.random() < 0.5 ? 'Idle_Talking_Loop' : 'Idle_Loop',
+          from: new THREE.Vector3(x, y, z), to: mode === 'walk' ? new THREE.Vector3(arg[0], y, arg[1]) : null, leg: 1, phase: Math.random() * 6 });
       }
     }
     function updateIndoorPeople(dt, t) {
       for (const p of indoorPeople) {
         if (!p.grp.parent.visible) continue;
+        realLOD(p, dt, true, p.mode === 'walk' ? 'Walk_Loop' : p.idleClip, p.mode === 'walk' ? 1.15 : 1);
         if (p.mode === 'walk') {
           const target = p.leg ? p.to : p.from;
           const dir = new THREE.Vector3().subVectors(target, p.grp.position);
