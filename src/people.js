@@ -91,6 +91,7 @@ function outfitMaterial(THREE, base, eye) {
     uMetal: { value: 0.1 }, uRough: { value: 0.5 },
     uTop: { value: new THREE.Color() }, uSleeve: { value: new THREE.Color() }, uSleeveSkin: { value: 0 },
     uLegs: { value: new THREE.Color() }, uShoes: { value: new THREE.Color() }, uShorts: { value: 0 },
+    uTopSkin: { value: 0 }, uFeetSkin: { value: 0 }, uSkinMode: { value: 0 },
     uEye: { value: eye.clone() },
   };
   mat.onBeforeCompile = (shader) => {
@@ -99,7 +100,7 @@ function outfitMaterial(THREE, base, eye) {
       '#include <begin_vertex>', '#include <begin_vertex>\n vBindPos = position;');
     shader.fragmentShader = `
       varying vec3 vBindPos;
-      uniform float uMode, uMask, uMetal, uRough, uEmblemOn, uHex, uSleeveSkin, uShorts;
+      uniform float uMode, uMask, uMetal, uRough, uEmblemOn, uHex, uSleeveSkin, uShorts, uTopSkin, uFeetSkin, uSkinMode;
       uniform vec3 uSkin, uMain, uSecond, uAccent, uEmblem, uMaskCol, uLens, uTop, uSleeve, uLegs, uShoes, uEye;
       float hexEdge(vec2 p) {
         vec2 r = vec2(1.0, 1.7320508), h = r * 0.5;
@@ -125,8 +126,9 @@ function outfitMaterial(THREE, base, eye) {
         float suitArea = 0.0;
         float cloth = 0.0;
         {
-          vec3 skin = diffuseColor.rgb * uSkin;
           float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+          // skin: tinted, or (uSkinMode 1) fully recoloured keeping the shading (purple Brute)
+          vec3 skin = uSkinMode > 0.5 ? uSkin * lum * 1.9 : diffuseColor.rgb * uSkin;
           float shade = clamp(lum / 0.5, 0.55, 1.4);
           float y = vBindPos.y, ax = abs(vBindPos.x);
           float hipY = uEye.y * 0.56;
@@ -157,7 +159,7 @@ function outfitMaterial(THREE, base, eye) {
             }
           } else if (uMode > 1.5) {
             // everyday clothes: top, sleeves (or bare arms), trousers/shorts, shoes
-            bool bareArm = uSleeveSkin > 0.5 && ax > uEye.y * 0.15;
+            bool bareArm = (uSleeveSkin > 0.5 && ax > uEye.y * 0.15) || (uTopSkin > 0.5 && !legs);
             bool bareLeg = uShorts > 0.5 && legs && y < hipY * 0.62;
             if (!head && !hand && !bareArm && !bareLeg) {
               cloth = 1.0;
@@ -166,7 +168,8 @@ function outfitMaterial(THREE, base, eye) {
               c *= legs ? 0.88 + 0.14 * weave : 0.94 + 0.08 * weave;
               diffuseColor.rgb = c * mix(1.0, shade, 0.25);
             }
-            if (feet) { cloth = 1.0; diffuseColor.rgb = uShoes * mix(1.0, shade, 0.3); }
+            if (feet && uFeetSkin < 0.5) { cloth = 1.0; diffuseColor.rgb = uShoes * mix(1.0, shade, 0.3); }
+            if (feet && uFeetSkin > 0.5) { cloth = 0.0; diffuseColor.rgb = skin; }
           }
         }`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
@@ -211,6 +214,7 @@ export function makeRealPerson(spec) {
   const { mat, U } = outfitMaterial(THREE, body.material, src.eye);
   body.material = mat;
   U.uSkin.value.set(spec.skin || '#ffffff');
+  U.uSkinMode.value = spec.skinMode === 'replace' ? 1 : 0;
   // eyebrows + hair (tinted), pinned to the head bone
   const head = model.getObjectByName('Head');
   const hairMat = (brows[0] ? brows[0].material : new THREE.MeshStandardMaterial()).clone();
@@ -254,6 +258,8 @@ export function makeRealPerson(spec) {
       U.uLegs.value.set(o.legs || '#2b3446');
       U.uShoes.value.set(o.shoes || '#f2f2f2');
       U.uShorts.value = o.shorts ? 1 : 0;
+      U.uTopSkin.value = o.top === 'skin' ? 1 : 0;
+      U.uFeetSkin.value = o.shoes === 'skin' ? 1 : 0;
     }
   }
   setOutfit(spec.outfit || { mode: 'clothes' });

@@ -6,6 +6,9 @@
 //
 // Boss models are built with feet at y = 0 and ~7 units tall (the hero is ~2.5).
 
+import { peopleReady, makeRealPerson } from './people.js';
+import { rockMaterial, lavaMaterial } from './surfaces.js';
+
 export const ARENA = { x: 0, z: -118, r: 30 };
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -70,15 +73,40 @@ function makeBrute(THREE) {
   return { group, body, legs, arms, height: 6.9, radius: 2.0, flashMats: [skin], baseEmissive: 0x000000 };
 }
 
+// Giant Rage Brute, realistic: the human model made giant and purple,
+// shirtless and barefoot in ripped dark trousers. The joint groups the AI
+// poses are stand-ins; the real body plays animation clips (see updateBoss).
+const BRUTE_SCALE = 3.8;
+function makeRealBrute(THREE) {
+  const real = makeRealPerson({
+    sex: 'male', skin: '#8f7bb0', skinMode: 'replace', hair: null, scale: BRUTE_SCALE, slim: -0.5, idle: 'Idle_Loop',
+    outfit: { mode: 'clothes', top: 'skin', legs: '#2d3442', shoes: 'skin' },
+  });
+  if (!real) return null;
+  const dj = () => new THREE.Group();
+  // thrown cars are held in the right hand (undo the giant scale for them)
+  const holder = new THREE.Group();
+  holder.scale.setScalar(1 / BRUTE_SCALE);
+  const hand = real.bone('hand_r');
+  if (hand) hand.add(holder);
+  return {
+    group: real.group, body: dj(), real,
+    legs: [0, 1].map(() => ({ hip: dj(), knee: dj() })),
+    arms: [{ sh: dj(), el: dj(), hand: dj() }, { sh: dj(), el: dj(), hand: holder }],
+    height: 6.9, radius: 2.0, flashMats: [real.bodyMat], baseEmissive: 0x000000,
+  };
+}
+
 function makeTitan(THREE) {
   const group = new THREE.Group();
   const body = new THREE.Group();
   group.add(body);
-  const rock = std(THREE, 0x6d6862, { roughness: 1, flatShading: true });
-  const rock2 = std(THREE, 0x57524c, { roughness: 1, flatShading: true });
-  const lava = new THREE.MeshStandardMaterial({ color: 0x331000, emissive: 0xff5a14, emissiveIntensity: 1.6 });
+  // cracked boulders, the darker ones with lava glowing in the cracks
+  const rock = rockMaterial(THREE, { color: '#7a746c', flat: true, repeat: 1.5 });
+  const rock2 = rockMaterial(THREE, { color: '#5a544d', lava: true, flat: true, repeat: 1.5, glow: 1.4 });
+  const lava = lavaMaterial(THREE); // glowing molten rock
   const eyes = new THREE.MeshBasicMaterial({ color: 0xffb347 });
-  const I = (r) => new THREE.IcosahedronGeometry(r, 0);
+  const I = (r) => new THREE.IcosahedronGeometry(r, 1);
   const S = (r) => new THREE.SphereGeometry(r, 14, 10);
 
   const legs = [-1, 1].map(sx => {
@@ -171,7 +199,7 @@ export function createBosses(THREE, scene, api) {
   }
 
   function spawnBoss(type, zone, rematch, offset) {
-    const rig = type === 'brute' ? makeBrute(THREE) : makeTitan(THREE);
+    const rig = type === 'brute' ? ((peopleReady() && makeRealBrute(THREE)) || makeBrute(THREE)) : makeTitan(THREE);
     const maxHp = Math.round((type === 'brute' ? 450 : 550) * (rematch ? 1.2 : 1));
     // start on the far side of the zone from the hero
     const away = new THREE.Vector3(zone.x - hero.position.x, 0, zone.z - hero.position.z);
@@ -319,12 +347,19 @@ export function createBosses(THREE, scene, api) {
   function updateBoss(b, dt, t) {
     const g = b.rig.group;
     if (b.flashT > 0) b.flashT -= dt;
-    const flash = b.flashT > 0 ? 0x661111 : b.rig.baseEmissive;
-    for (const m of b.rig.flashMats) m.emissive.setHex(flash);
+    for (const m of b.rig.flashMats) m.emissive.setHex(b.flashT > 0 ? 0x661111 : (m.userData.baseEmissive ?? b.rig.baseEmissive));
     if (b.dangerT > 0) b.dangerT -= dt;
 
     if (b.state === 'dead') {
       b.deadT += dt;
+      if (b.rig.real) {
+        // the death animation does the falling; then he sinks away
+        b.rig.real.armsUp = 0;
+        b.rig.real.play('Death01', { once: true });
+        b.rig.real.update(dt);
+        g.position.y = b.zone.y - Math.max(0, b.deadT - 2.2) * 2;
+        return;
+      }
       g.rotation.x = Math.max(-Math.PI / 2, g.rotation.x - dt * 1.4);
       g.position.y = b.zone.y - Math.max(0, b.deadT - 1.2) * 2;
       return;
@@ -407,6 +442,23 @@ export function createBosses(THREE, scene, api) {
         break;
       default:
         break;
+    }
+
+    // realistic Brute: pick the animation for what he's doing
+    if (b.rig.real) {
+      const R = b.rig.real;
+      let clip = 'Idle_Loop', speed = 1, up = 0;
+      if (b.state === 'roar') up = 1;
+      else if (b.state === 'chase') { clip = dist > 7 ? 'Walk_Loop' : 'Idle_Loop'; speed = dist > 7 ? b.speed / 5.3 : 1; }
+      else if (b.state === 'windup') {
+        if (b.attack === 'smash') up = 1;
+        else if (b.attack === 'throw') clip = 'Spell_Simple_Enter';
+        else clip = 'Crouch_Idle_Loop';
+      } else if (b.state === 'charging') { clip = 'Sprint_Loop'; speed = 1.3; }
+      else if (b.state === 'leaping') { clip = 'Jump_Loop'; up = 1; }
+      R.play(clip, { speed });
+      R.armsUp += (up - R.armsUp) * Math.min(1, dt * 8);
+      R.update(dt);
     }
 
     // keep the hero from walking through the boss

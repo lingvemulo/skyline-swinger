@@ -9,6 +9,7 @@
 import { ARENA } from './bosses.js';
 import { rand, pick, angDiff, std, joint, part, makePerson, makeNinja } from './story-kit.js';
 import { peopleReady, makeRealPerson } from './people.js';
+import { rockMaterial, metalMaterial, lavaMaterial } from './surfaces.js';
 
 const KAI = '📱 KAI';
 const YOU = '🦸 YOU';
@@ -835,9 +836,10 @@ function makeMech(THREE) {
   const group = new THREE.Group();
   const body = new THREE.Group();
   group.add(body);
-  const metal = std(THREE, 0x5a6270, { metalness: 0.6, roughness: 0.4 });
-  const dark = std(THREE, 0x2a2f38, { metalness: 0.5, roughness: 0.5 });
-  const yellow = std(THREE, 0xf2b705, { metalness: 0.3, roughness: 0.5 });
+  // worn armour plating: gunmetal, dark steel and scratched yellow paint
+  const metal = metalMaterial(THREE, { color: '#5f6774', panels: 4, rust: 0.25 });
+  const dark = metalMaterial(THREE, { color: '#2c313a', panels: 3, rust: 0.4 });
+  const yellow = metalMaterial(THREE, { color: '#e8ad08', panels: 2, stripes: true, rust: 0.15, metalness: 0.35, roughness: 0.4 });
   const red = new THREE.MeshBasicMaterial({ color: 0xff3322 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x6fb6ff, transparent: true, opacity: 0.55, metalness: 0.3, roughness: 0.1, emissive: 0x113355 });
   const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
@@ -891,11 +893,11 @@ function makeFireMonster(THREE, tex) {
   const group = new THREE.Group();
   const body = new THREE.Group();
   group.add(body);
-  const rock = std(THREE, 0x2b1b14, { roughness: 1, flatShading: true });
-  const lava = new THREE.MeshStandardMaterial({ color: 0x331000, emissive: 0xff5a14, emissiveIntensity: 1.8 });
-  lava.userData.baseEmissive = 0xff5a14;
+  // dark volcanic rock with lava glowing through the cracks
+  const rock = rockMaterial(THREE, { color: '#3a2418', lava: true, flat: true, repeat: 1.5, glow: 1.8 });
+  const lava = lavaMaterial(THREE); // glowing molten rock
   const eyes = new THREE.MeshBasicMaterial({ color: 0xffe066 });
-  const I = (r) => new THREE.IcosahedronGeometry(r, 0);
+  const I = (r) => new THREE.IcosahedronGeometry(r, 1);
   const S = (r) => new THREE.SphereGeometry(r, 12, 10);
   const legs = [-1, 1].map(sx => {
     const hip = joint(THREE, body, sx * 0.5, 1.7, 0);
@@ -1765,8 +1767,8 @@ function missionStorm(ctx) {
 // =====================================================================
 function makeDrone(THREE) {
   const group = new THREE.Group();
-  const yellow = std(THREE, 0xf2b705, { metalness: 0.3 });
-  const dark = std(THREE, 0x22252b, { metalness: 0.5 });
+  const yellow = metalMaterial(THREE, { color: '#e8ad08', panels: 2, stripes: true, rust: 0.1, metalness: 0.35, roughness: 0.4 });
+  const dark = metalMaterial(THREE, { color: '#24272d', panels: 3, rust: 0.3 });
   part(THREE, group, new THREE.BoxGeometry(1.8, 0.55, 1.8), yellow);
   part(THREE, group, new THREE.BoxGeometry(1.82, 0.2, 0.4), dark, 0, 0.05, 0);
   const rotors = [];

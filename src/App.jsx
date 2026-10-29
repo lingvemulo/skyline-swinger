@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { buildHero, OUTFITS } from './hero.js';
 import { loadRealHero } from './hero-real.js';
 import { loadPeople, peopleReady, makeRealPerson, randomCivilian } from './people.js';
+import { metalMaterial, setMetalEnv } from './surfaces.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { createBosses, ARENA } from './bosses.js';
 import { mountChat } from './chat/chat-ui.js';
 import { createStory, MISSIONS, normalizeProgress } from './story.js';
@@ -187,6 +189,12 @@ export default function SkylineSwingerMobile() {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     mount.appendChild(renderer.domElement);
+    // soft reflections for metal (robots, the Mech); only metal uses it
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      setMetalEnv(pmrem.fromScene(new RoomEnvironment(), 0.04).texture);
+      pmrem.dispose();
+    } catch (e) { /* no reflections on very old devices */ }
     // surface GPU problems that otherwise only leave a black screen
     renderer.debug.onShaderError = (gl, program, vs, fs) => {
       const log = (gl.getShaderInfoLog(fs) || gl.getShaderInfoLog(vs) || gl.getProgramInfoLog(program) || '').slice(0, 300);
@@ -981,13 +989,19 @@ export default function SkylineSwingerMobile() {
 
     // ---------- Enemies (original robotic "Voltbots", plus Heavy and Flyer variants) ----------
     const enemies = [];
+    // worn metal for the robots, shared by every Voltbot of a kind
+    const robotMats = {};
+    const robotMetal = (kind) => robotMats[kind] || (robotMats[kind] = kind === 'heavy'
+      ? metalMaterial(THREE, { color: '#232a35', panels: 3, stripes: true, rust: 0.35, metalness: 0.7 })
+      : kind === 'flyer' ? metalMaterial(THREE, { color: '#55677d', panels: 2, rust: 0.1, metalness: 0.85, roughness: 0.3 })
+        : metalMaterial(THREE, { color: '#3d434f', panels: 3, rust: 0.3 }));
     function makeEnemy(x, z, groundY, type = 'grunt') {
       const grp = new THREE.Group();
       const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff2c3c, emissive: 0xff2c3c, emissiveIntensity: 1.4 });
       let eye, health, speed, dmg, attackRange, hoverHeight = null, shootRange = 0;
 
       if (type === 'heavy') {
-        const bodyMat2 = new THREE.MeshStandardMaterial({ color: 0x1f2530, metalness: 0.5, roughness: 0.45 });
+        const bodyMat2 = robotMetal('heavy');
         const body = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 1.7, 8), bodyMat2);
         body.position.y = 1.3; body.castShadow = true; grp.add(body);
         const headM = new THREE.Mesh(new THREE.SphereGeometry(0.46, 10, 10), bodyMat2);
@@ -1004,7 +1018,7 @@ export default function SkylineSwingerMobile() {
         grp.position.set(x, groundY + 1.85, z);
         health = 110; speed = 1.9; dmg = 16; attackRange = 2.0;
       } else if (type === 'flyer') {
-        const bodyMat3 = new THREE.MeshStandardMaterial({ color: 0x445566, metalness: 0.6, roughness: 0.3 });
+        const bodyMat3 = robotMetal('flyer');
         const domeMat = new THREE.MeshStandardMaterial({ color: 0x88e0ff, emissive: 0x2288aa, emissiveIntensity: 0.8, transparent: true, opacity: 0.85 });
         const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 0.25, 10), bodyMat3);
         disc.castShadow = true; grp.add(disc);
@@ -1016,7 +1030,7 @@ export default function SkylineSwingerMobile() {
         grp.position.set(x, hoverHeight, z);
         health = 25; speed = 5.5; dmg = 10; attackRange = 0; shootRange = 32;
       } else {
-        const bodyMat2 = new THREE.MeshStandardMaterial({ color: 0x2b2f3a, metalness: 0.4, roughness: 0.5 });
+        const bodyMat2 = robotMetal('grunt');
         const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 8), bodyMat2);
         body.position.y = 1.0; body.castShadow = true; grp.add(body);
         const headM = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 10), bodyMat2);
