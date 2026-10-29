@@ -10,6 +10,8 @@
 
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OUTFITS, SUIT_COLOURS } from './hero.js';
+import { makeShell, makeSneakers } from './hero-wear.js';
+import { metalEnvTex } from './surfaces.js';
 
 const MODEL_H = 1.81; // model height in its own units (feet at 0)
 const HERO_H = 2.5; // game hero height
@@ -78,6 +80,21 @@ export function loadRealHero(THREE, rig) {
     const eyeY = eyeMeshes.length ? (eyeBox.min.y + eyeBox.max.y) / 2 : 1.66;
     const eyeZ = eyeMeshes.length ? eyeBox.max.z : 0.1;
     const eyeX = eyeMeshes.length ? Math.max(0.025, (eyeBox.max.x - eyeBox.min.x) / 4) : 0.033;
+
+    // ---- real clothes + sneakers for the street outfits ----
+    const hipY = eyeY * 0.56, neckY = eyeY - 0.16, wristX = eyeY * 0.39, ankleY = 0.09;
+    const top = { yMin: hipY - 0.05, yMax: neckY, axMax: wristX - 0.02 };
+    const legsArea = { yMin: ankleY, yMax: hipY + 0.03 };
+    const wear = {
+      hoodie: makeShell(THREE, bodyMesh, top, 0.024, '#8d939b'),
+      tee: makeShell(THREE, bodyMesh, { yMin: hipY - 0.05, yMax: neckY, axMax: 0.3 }, 0.01, '#f2f2f2'),
+      // open jacket: no fabric down the middle of the chest, so the T-shirt shows
+      jacket: makeShell(THREE, bodyMesh, { ...top, yMax: neckY - 0.01, openFront: 0.08 }, 0.034, '#3d5a3d'),
+      jeansBlue: makeShell(THREE, bodyMesh, legsArea, 0.014, '#3f5f8f', 'denim'),
+      jeansDark: makeShell(THREE, bodyMesh, legsArea, 0.014, '#2b3446', 'denim'),
+    };
+    const shoes = makeSneakers(THREE, bodyMesh);
+    const WEAR = { hoodie: ['hoodie', 'jeansBlue'], jacket: ['tee', 'jacket', 'jeansDark'] };
 
     // ---- outfit shader on the body ----
     const mat = bodyMesh.material.clone();
@@ -186,6 +203,13 @@ export function loadRealHero(THREE, rig) {
       for (const m of eyeMeshes) m.visible = !showMask;
       for (const m of hairMeshes) m.visible = !showMask;
       U.uMask.value = showMask ? 1 : 0;
+      const worn = WEAR[id] || [];
+      for (const [k, m] of Object.entries(wear)) m.visible = worn.includes(k);
+      for (const sh of shoes) sh.visible = !suit;
+      // suits catch reflections from the city: gold gleams, the others have a soft sheen
+      mat.envMap = metalEnvTex();
+      mat.envMapIntensity = suit ? ((SUIT_COLOURS[id] || {}).metal > 0.5 ? 1.5 : 0.6) : 0.2;
+      mat.needsUpdate = true;
       if (suit) {
         const c = SUIT_COLOURS[id] || SUIT_COLOURS.classic;
         U.uMode.value = 1;

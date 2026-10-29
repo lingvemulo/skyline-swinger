@@ -12,6 +12,7 @@ const SIZE = 256;
 // material, made before or after, uses it.
 let metalEnv = null;
 const metalMats = [];
+export function metalEnvTex() { return metalEnv; }
 export function setMetalEnv(envTex) {
   metalEnv = envTex;
   for (const m of metalMats) { m.envMap = envTex; m.needsUpdate = true; }
