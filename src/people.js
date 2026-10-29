@@ -300,7 +300,7 @@ export function makeRealPerson(spec) {
   }
   let t = 0;
   const person = {
-    group, model, play, setOutfit, bone: B, uniforms: U,
+    group, model, play, setOutfit, bone: B, uniforms: U, bodyMat: mat,
     armsUp: 0, // 0..1 both arms straight up (falling under a parachute, cheering)
     wave: 0,   // 0..1 right arm waving for help
     get clip() { return curName; },

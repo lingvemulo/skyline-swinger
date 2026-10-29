@@ -12,7 +12,7 @@
 // (see createStory) and reports UI state back through api.onUi.
 
 import { ARENA } from './bosses.js';
-import { PART2_FACTORIES } from './story2.js';
+import { PART2_FACTORIES, stepBack } from './story2.js';
 import { rand, pick, ease, angDiff, std, makePerson, makeNinja, makeGetawayCar, flameTexture, glowTexture } from './story-kit.js';
 
 export const MISSIONS = [
@@ -806,7 +806,8 @@ export function createStory(THREE, scene, api) {
         return { pos: g.position.clone().addScaledVector(f, 3.6).add(V(0.9, 1.0, 0)), look: g.position.clone().add(V(0, 1.2, 0)) };
       };
       ctx.finish('won', [
-        { text: 'The Shadow Ninja drops to one knee!', snap: true, cam: orbit(() => g.position.clone().add(V(0, 1, 0)), 6, 2.5, g.rotation.y, g.rotation.y + 1.2),
+        { text: 'The Shadow Ninja drops to one knee!', snap: true, enter: () => stepBack(ctx, g, 6),
+          cam: orbit(() => g.position.clone().add(V(0, 1, 0)), 6, 2.5, g.rotation.y, g.rotation.y + 1.2),
           update: (u, dt) => setPose(KNEEL, dt * 6) },
         { who: NINJA, text: 'Impossible... YOU beat ME?!', cam: closeCam, update: (u, dt) => setPose(KNEEL, dt * 6) },
         { who: NINJA, text: 'It does not matter. The Boss has three more of us...' },
@@ -844,6 +845,14 @@ export function createStory(THREE, scene, api) {
       },
       anim(dt, t) {
         N.scarf.rotation.x = 0.4 + Math.sin(t * 6) * 0.15;
+        if (N.real) {
+          const moving = nj.state === 'chase' && Math.hypot(hero.position.x - g.position.x, hero.position.z - g.position.z) > 4.5;
+          N.play(nj.state === 'beaten' ? 'Fixing_Kneeling'
+            : nj.state === 'windup' ? (nj.attack === 'stars' ? 'Spell_Simple_Enter' : 'Crouch_Idle_Loop')
+            : nj.state === 'dash' ? 'Sword_Attack'
+            : moving ? 'Sprint_Loop' : 'Sword_Idle', { speed: nj.state === 'dash' ? 1.6 : 1 });
+          N.update(dt);
+        }
         if (nj.flash > 0) nj.flash -= dt;
         for (const m of N.flashMats) m.emissive.setHex(nj.flash > 0 ? 0x661111 : 0x000000);
         if (phase === 'travel' || nj.state === 'idle') {

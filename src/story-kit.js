@@ -57,8 +57,46 @@ export function makePerson(THREE) {
   return { group, armL, armR, legL, legR, real, update };
 }
 
-// Shadow Ninja, feet at y = 0, ~2.2 tall after scaling
+// Shadow Ninja, feet at y = 0, ~2.2 tall after scaling.
+// Realistic version (when the people models have loaded): a real body in a
+// black suit with a red eye slit, red scarf and a katana in his right hand.
+export const NINJA_LOOK = {
+  sex: 'male', skin: '#c18a63', hair: null, scale: 1.22, slim: 0.35, idle: 'Sword_Idle',
+  outfit: { mode: 'suit', main: '#16181e', second: '#262a33', accent: '#07070a', hex: 0.18, mask: true, maskCol: '#121318', lens: '#ff2a3c', metal: 0.15, rough: 0.6 },
+};
+function makeRealNinja(THREE) {
+  const real = makeRealPerson(NINJA_LOOK);
+  if (!real) return null;
+  const inv = 1 / NINJA_LOOK.scale; // bones live inside the scaled model
+  // katana in the right hand
+  const steel = std(THREE, 0xdfe5ee, { metalness: 0.9, roughness: 0.2 });
+  const wrap = std(THREE, 0x343844, { roughness: 0.8 });
+  const sword = new THREE.Group();
+  part(THREE, sword, new THREE.CylinderGeometry(0.022, 0.022, 0.24, 8), wrap, 0, 0.06, 0);
+  part(THREE, sword, new THREE.BoxGeometry(0.14, 0.025, 0.035), steel, 0, 0.19, 0);
+  part(THREE, sword, new THREE.BoxGeometry(0.03, 0.85, 0.01), steel, 0, 0.62, 0);
+  sword.scale.setScalar(inv);
+  const hand = real.bone('hand_r');
+  if (hand) { sword.position.set(0, 0.05 * inv, 0.03 * inv); sword.rotation.set(0, 0, -Math.PI / 2); hand.add(sword); }
+  // red scarf tied round the neck with tails flying behind
+  const scarfMat = std(THREE, 0xc8102e, { side: THREE.DoubleSide });
+  const scarf = new THREE.Group();
+  const neck = real.bone('neck_01');
+  part(THREE, scarf, new THREE.TorusGeometry(0.075, 0.025, 6, 14), scarfMat, 0, 0, 0).rotation.x = Math.PI / 2;
+  const tail = part(THREE, scarf, new THREE.PlaneGeometry(0.1, 0.55), scarfMat, 0.03, -0.27, -0.08);
+  tail.rotation.x = 0.4;
+  scarf.scale.setScalar(inv * 1.1);
+  if (neck) neck.add(scarf);
+  const dj = () => new THREE.Group();
+  return {
+    group: real.group, body: dj(), head: dj(), scarf, flashMats: [real.bodyMat], real,
+    arms: [0, 1].map(() => ({ sh: dj(), el: dj(), hand: dj() })), legs: [0, 1].map(() => ({ hip: dj(), knee: dj() })),
+    play: real.play, update: real.update,
+  };
+}
 export function makeNinja(THREE) {
+  const r = peopleReady() ? makeRealNinja(THREE) : null;
+  if (r) return r;
   const group = new THREE.Group();
   const body = new THREE.Group();
   group.add(body);

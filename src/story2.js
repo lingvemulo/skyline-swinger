@@ -540,6 +540,18 @@ function makeFighter(ctx, F, o) {
     for (const mat of m.flashMats || []) mat.emissive.setHex(f.flash > 0 ? 0x661111 : (mat.userData.baseEmissive || 0));
     if (o.hover) g.position.y = F.zone.y + o.hover + Math.sin(t * 2.2) * 0.25;
     const A = o.attacks[f.attack] || {};
+    if (m.real && o.clips) {
+      const C = o.clips;
+      const clip = f.state === 'down' ? C.down
+        : f.state === 'chase' ? (f.moving ? C.run : C.idle)
+          : f.state === 'windup' ? ((C.windup || {})[f.attack] || C.idle)
+            : f.state === 'act' ? ((C.act || {})[f.attack] || C.run)
+              : C.idle;
+      m.real.play(clip || 'Idle_Loop', { speed: f.state === 'act' ? 1.5 : 1 });
+      m.real.update(dt);
+      if (m.tick) m.tick(dt, t, f, A);
+      return;
+    }
     if (f.state === 'down') setPose(scaled(o.poses.down || KNEEL), dt * 5);
     else if (f.state === 'chase') setPose(scaled(WALK(Math.sin(f.walk) * (f.moving ? 0.6 : 0.12), o.lean || 0.15)), dt * 10);
     else if (f.state === 'windup') setPose(scaled((o.poses.windup || {})[f.attack] || o.poses.idle), dt * 9);
@@ -1033,6 +1045,8 @@ function ninjaFighter(ctx, F, hpMul = 1) {
   const m = makeNinja(ctx.THREE);
   return makeFighter(ctx, F, {
     name: 'SHADOW NINJA', title: 'Shadow Ninja', maxHp: Math.round(330 * hpMul), model: m, radius: 0.7, height: 2.2, speed: 9, keep: 4.5, cd: [1.0, 1.8],
+    clips: { idle: 'Sword_Idle', run: 'Sprint_Loop', down: 'Fixing_Kneeling',
+      windup: { slash: 'Crouch_Idle_Loop', tele: 'Crouch_Idle_Loop', stars: 'Spell_Simple_Enter' }, act: { slash: 'Sword_Attack', tele: 'Sword_Attack' } },
     attacks: { slash: dashAttack(ctx, F), stars: throwingStars(ctx, F), tele: teleportSlash(ctx, F) },
     poses: {
       idle: { shL: 0.2, shR: -0.9, elL: -0.5, elR: -0.9, hipL: -0.25, hipR: 0.25, knL: 0.35, knR: 0.35, lean: 0.12, crouch: -0.1 },
@@ -1055,12 +1069,48 @@ function ninjaFighter(ctx, F, hpMul = 1) {
     },
   });
 }
+const STORM_LOOK = {
+  sex: 'male', skin: '#b9c6d6', hair: 'buzzed', beard: true, hairColour: '#dfe6f0', scale: 1.55, slim: 0.25, idle: 'Spell_Simple_Idle_Loop',
+  outfit: { mode: 'suit', main: '#1b2a4a', second: '#24365c', accent: '#8fe3ff', emblem: '#e8fbff', emblemOn: true, hex: 0.25, mask: false, metal: 0.3, rough: 0.4 },
+};
+function makeRealStorm(THREE, tex) {
+  const real = makeRealPerson(STORM_LOOK);
+  if (!real) return null;
+  const inv = 1 / STORM_LOOK.scale;
+  const glow = new THREE.MeshBasicMaterial({ color: 0x8fe3ff });
+  const hands = ['hand_l', 'hand_r'].map(n => {
+    const b = real.bone(n);
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.07 * inv * 1.5, 10, 8), glow);
+    if (b) b.add(orb);
+    return orb;
+  });
+  const clouds = [];
+  for (let i = 0; i < 5; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex.smoke, transparent: true, depthWrite: false, opacity: 0.9 }));
+    sp.scale.setScalar(1.5);
+    real.group.add(sp);
+    clouds.push(sp);
+  }
+  return {
+    group: real.group, body: new THREE.Group(), arms: [], legs: [], flashMats: [real.bodyMat], real,
+    tick(dt, t, f) {
+      clouds.forEach((sp, i) => {
+        const a = t * 2.5 + i * 1.26;
+        sp.position.set(Math.cos(a) * 0.7, 0.1 + (i % 2) * 0.3, Math.sin(a) * 0.7);
+      });
+      const k = f.state === 'windup' ? 1.6 + Math.sin(t * 40) * 0.6 : 1;
+      for (const h of hands) h.scale.setScalar(k);
+    },
+  };
+}
 function stormFighter(ctx, F, hpMul = 1) {
   const { THREE, V, api, hero } = ctx;
-  const m = makeStormMaster(THREE, ctx.tex);
+  const m = (peopleReady() && makeRealStorm(THREE, ctx.tex)) || makeStormMaster(THREE, ctx.tex);
   const funnelMat = new THREE.MeshBasicMaterial({ color: 0xaab4c4, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
   return makeFighter(ctx, F, {
     name: 'STORM MASTER', title: 'Storm Master', maxHp: Math.round(380 * hpMul), model: m, radius: 0.8, height: 3.0, speed: 6, keep: 9, hover: 0.9, cd: [1.1, 2.0],
+    clips: { idle: 'Spell_Simple_Idle_Loop', run: 'Swim_Fwd_Loop', down: 'Fixing_Kneeling',
+      windup: { lightning: 'Spell_Simple_Enter', gust: 'Spell_Simple_Enter', whirl: 'Spell_Simple_Enter' } },
     attacks: {
       lightning: lightningAttack(ctx, F),
       gust: {
@@ -1188,10 +1238,33 @@ function fireFighter(ctx, F, hpMul = 1) {
     },
   });
 }
+const BOSS_LOOK = {
+  sex: 'male', skin: '#c18a63', hair: null, scale: 1.4, slim: 0.2, idle: 'Idle_Loop',
+  outfit: { mode: 'suit', main: '#1a1424', second: '#2e2240', accent: '#b46bff', emblem: '#e2c6ff', emblemOn: true, hex: 0.35, mask: true, maskCol: '#1a1424', lens: '#c896ff', metal: 0.65, rough: 0.3 },
+};
+function makeRealBoss(THREE) {
+  const real = makeRealPerson(BOSS_LOOK);
+  if (!real) return null;
+  const inv = 1 / BOSS_LOOK.scale;
+  const capeMat = std(THREE, 0x3b1366, { side: THREE.DoubleSide });
+  const cape = new THREE.Group();
+  const capeMesh = part(THREE, cape, new THREE.PlaneGeometry(0.62, 1.25), capeMat, 0, -0.62, -0.02);
+  capeMesh.castShadow = true;
+  cape.scale.setScalar(inv * 1.3);
+  const spine = real.bone('spine_03');
+  if (spine) { cape.position.set(0, 0.12 * inv, -0.14 * inv); spine.add(cape); }
+  return {
+    group: real.group, body: new THREE.Group(), arms: [], legs: [], flashMats: [real.bodyMat], real,
+    tick(dt, t) { cape.rotation.x = 0.25 + Math.sin(t * 5) * 0.1; },
+  };
+}
 function bossFighter(ctx, F) {
-  const m = makeBossSuit(ctx.THREE);
+  const m = (peopleReady() && makeRealBoss(ctx.THREE)) || makeBossSuit(ctx.THREE);
   return makeFighter(ctx, F, {
     name: 'THE BOSS (KAI)', title: 'Boss', maxHp: 650, model: m, radius: 0.8, height: 2.6, speed: 10, keep: 5, cd: [0.9, 1.6],
+    clips: { idle: 'Idle_Loop', run: 'Sprint_Loop', down: 'Fixing_Kneeling',
+      windup: { slash: 'Crouch_Idle_Loop', tele: 'Crouch_Idle_Loop', lightning: 'Spell_Simple_Enter', missiles: 'Spell_Simple_Enter', fireball: 'Spell_Simple_Enter' },
+      act: { slash: 'Punch_Cross', tele: 'Punch_Cross' } },
     attacks: {
       slash: dashAttack(ctx, F, { dmg: 15 }),
       tele: teleportSlash(ctx, F),
@@ -1351,10 +1424,23 @@ function henchLose(ctx, f, how, taunts, kaiLine) {
     update: (u) => { if (down && u > 0.6 && api.heroRig.flip.rotation.x !== 0) { api.heroRig.flip.rotation.x = 0; hero.position.y += 1.05; } } });
   return shots;
 }
+// the hero steps back from a beaten villain so the camera can see them both
+export function stepBack(ctx, g, dist) {
+  const { hero, V } = ctx;
+  const away = V(hero.position.x - g.position.x, 0, hero.position.z - g.position.z);
+  if (away.lengthSq() < 0.01) away.set(0, 0, 1);
+  away.normalize();
+  hero.position.x = g.position.x + away.x * dist;
+  hero.position.z = g.position.z + away.z * dist;
+  if (hero.position.y < g.position.y + 1.5) hero.position.y = g.position.y + 1.5;
+  hero.rotation.y = Math.atan2(-away.x, -away.z);
+  g.rotation.y = Math.atan2(away.x, away.z);
+}
 function henchWin(ctx, f, lines, vanishText, kaiLines) {
   const g = f.group;
   return [
-    { text: `The ${f.title} is beaten!`, snap: true, cam: ctx.orbit(() => g.position.clone().add(ctx.V(0, f.height * 0.4, 0)), 5 + f.radius * 2, 2 + f.height * 0.3, g.rotation.y, g.rotation.y + 1.2) },
+    { text: `The ${f.title} is beaten!`, snap: true, enter: () => stepBack(ctx, g, 6 + f.radius * 2),
+      cam: ctx.orbit(() => g.position.clone().add(ctx.V(0, f.height * 0.4, 0)), 5 + f.radius * 2, 2 + f.height * 0.3, g.rotation.y, g.rotation.y + 1.2) },
     ...lines.map((text, i) => ({ who: f.name, text, cam: i === 0 ? f.closeCam : undefined })),
     { text: vanishText, dur: 3, enter: () => f.vanish() },
     ...ctx.phone(kaiLines).map((s, i) => ({ ...s, snap: i === 0 })),
