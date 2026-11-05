@@ -245,6 +245,7 @@ export function loadRealHero(THREE, rig) {
     const B = {
       uaR: bone('upperarm_r'), laR: bone('lowerarm_r'), hR: bone('hand_r'),
       uaL: bone('upperarm_l'), laL: bone('lowerarm_l'), hL: bone('hand_l'),
+      chest: bone('spine_03'),
     };
     // turn a bone so the direction to its child points along `dir` (world space)
     const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _wq = new THREE.Quaternion();
@@ -283,7 +284,7 @@ export function loadRealHero(THREE, rig) {
       shotT = dur || act.getClip().duration * 0.85;
       if (base) base.setEffectiveWeight(0.0001);
     };
-    // s: { mode, speed, anchor (world point the web is attached to, or null) }
+    // s: { mode, speed, anchor (world point the web is attached to, or null), breath (0..1 Focus swell) }
     api.update = (dt, s) => {
       const mode = s.mode || 'idle';
       let speed = 1;
@@ -296,6 +297,11 @@ export function loadRealHero(THREE, rig) {
         if (shotT <= 0) { shot.fadeOut(0.15); shot = null; if (base) base.setEffectiveWeight(1); }
       }
       mixer.update(dt);
+      // Focus: the chest swells and settles with the ring (s.breath 0..1)
+      if (B.chest) {
+        const k = s.breath || 0;
+        B.chest.scale.set(1 + 0.05 * k, 1 + 0.02 * k, 1 + 0.08 * k);
+      }
       // web arm: reach up the web line while swinging / zipping
       const want = (mode === 'swing' || mode === 'zip') && s.anchor ? 1 : 0;
       armW += (want - armW) * Math.min(1, dt * 12);

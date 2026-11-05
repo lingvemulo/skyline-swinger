@@ -8,6 +8,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { createBosses, ARENA } from './bosses.js';
 import { mountChat } from './chat/chat-ui.js';
 import { createStory, MISSIONS, normalizeProgress } from './story.js';
+import { createFocus, REWARDS, FOCUS_SEGMENTS } from './focus.js';
 import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
 export default function SkylineSwingerMobile() {
@@ -141,6 +142,75 @@ export default function SkylineSwingerMobile() {
     }
   };
   useEffect(() => { if (score >= 40) unlockOutfit('gold'); }, [score, unlockOutfit]);
+
+  // ---------- Focus Charge HUD ----------
+  const focusRef = useRef(null); // the game's focus object (press, spend)
+  const focusBtnRef = useRef(null);
+  const focusRingRef = useRef(null);
+  const focusCueRef = useRef(null);
+  const focusFillRef = useRef(null); // inner bar of the meter segment being charged
+  const [focusHud, setFocusHud] = useState({ meter: 0, superSwing: false, shield: false, stealth: false, cycles: 0 });
+  const toast = (text, ms = 2500) => { setUnlockToast(text); setTimeout(() => setUnlockToast(''), ms); };
+
+  // ---------- Mission Control: adult-only switch for Focus requirements ----------
+  // Long-press the Orbs/Voltbots box for 3 s. The first time on a device it asks
+  // for a new code; after that the right code toggles Focus requirements and a
+  // wrong one just closes. Only a SHA-256 hash of the code is stored (this
+  // device only) — it stops casual guessing, not someone with dev tools.
+  const MC_HASH_KEY = 'skyline-swinger-mc';
+  const FOCUS_REQ_KEY = 'skyline-swinger-focus-req';
+  const [focusRequired, setFocusRequired] = useState(() => {
+    try { return localStorage.getItem(FOCUS_REQ_KEY) !== '0'; } catch (e) { return true; }
+  });
+  const focusRequiredRef = useRef(focusRequired);
+  focusRequiredRef.current = focusRequired;
+  const [mc, setMc] = useState(null); // null, or { setup, note }
+  const mcPressRef = useRef(null);
+  const mcCodeRef = useRef(null);
+  const mcCode2Ref = useRef(null);
+  const mcPressStart = (e) => {
+    e.stopPropagation();
+    clearTimeout(mcPressRef.current);
+    mcPressRef.current = setTimeout(() => {
+      let has = false;
+      try { has = !!localStorage.getItem(MC_HASH_KEY); } catch (err) { /* private mode */ }
+      setMc({ setup: !has, note: '' });
+    }, 3000);
+  };
+  const mcPressEnd = () => clearTimeout(mcPressRef.current);
+  const mcInputStyle = {
+    width: '100%', boxSizing: 'border-box', padding: '9px 10px', marginBottom: 8, borderRadius: 10, fontSize: 16,
+    border: '1.5px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.08)', color: '#fff'
+  };
+  const mcHash = async (code) => {
+    const bytes = new TextEncoder().encode('skyline-mission-control:' + code);
+    const buf = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
+  };
+  const mcSubmit = async () => {
+    const code = (mcCodeRef.current && mcCodeRef.current.value || '').trim();
+    const code2 = (mcCode2Ref.current && mcCode2Ref.current.value || '').trim();
+    if (!mc) return;
+    if (mc.setup) {
+      if (code.length < 4) { setMc({ setup: true, note: 'Use at least 4 characters.' }); return; }
+      if (code !== code2) { setMc({ setup: true, note: "The two codes don't match." }); return; }
+    }
+    setMc(null);
+    if (!code || !(window.crypto && crypto.subtle)) return;
+    const h = await mcHash(code);
+    if (mc.setup) {
+      try { localStorage.setItem(MC_HASH_KEY, h); } catch (e) { return; }
+      toast('Mission Control code saved');
+      return;
+    }
+    let saved = null;
+    try { saved = localStorage.getItem(MC_HASH_KEY); } catch (e) { /* private mode */ }
+    if (h !== saved) return; // wrong code: close quietly, no hint
+    const next = !focusRequiredRef.current;
+    setFocusRequired(next);
+    try { localStorage.setItem(FOCUS_REQ_KEY, next ? '1' : '0'); } catch (e) { /* private mode */ }
+    toast(next ? 'Mission Control: Focus requirements ON' : 'Mission Control: Focus requirements OFF');
+  };
 
   const startGame = useCallback(() => {
     // Create/resume the AudioContext synchronously inside this click handler —
@@ -1566,6 +1636,18 @@ export default function SkylineSwingerMobile() {
       shakeT = Math.max(shakeT, dur);
     }
 
+    // ---------- Focus Charge (see focus.js) ----------
+    // Focus only charges while the hero is standing on something solid.
+    const focus = createFocus(THREE, {
+      hero, scene, audioCtx, spawnBurst, showMsg,
+      canFocus: () => onGround && !isSwinging && !zip && !wallRun && !scope && !story.inCutscene,
+      onHud: (hud) => setFocusHud(hud),
+    });
+    focusRef.current = focus;
+    let superSwingOn = false; // the current swing is a Super Swing
+    let superTrailT = 0;      // light trail keeps going briefly after letting go
+    let sinceHitT = 99;       // seconds since the hero was last hurt
+
     function raycastFromCamera() {
       const dir = new THREE.Vector3(0, 0, -1);
       dir.applyEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
@@ -1622,6 +1704,11 @@ export default function SkylineSwingerMobile() {
       swingLength = hero.position.distanceTo(point) * 0.92; // a little pull as the web catches
       isSwinging = true;
       sfxSwing();
+      superSwingOn = focus.takeSuperSwing();
+      if (superSwingOn) {
+        swingLength *= 1.12; // a longer rope = a bigger arc
+        playTone({ freq: 400, freqEnd: 1200, duration: 0.35, type: 'triangle', gain: 0.12 });
+      }
     }
     // Swing boost: letting go near the bottom of the swing, while moving fast,
     // flings the hero forward and up ("perfect release").
@@ -1641,8 +1728,19 @@ export default function SkylineSwingerMobile() {
       } else {
         heroVelocity.y += 3;
       }
+      let maxV = 48;
+      if (superSwingOn) {
+        // Super Swing release: always a big fling, and a higher speed limit
+        superSwingOn = false;
+        superTrailT = 1.6;
+        heroVelocity.x *= 1.3;
+        heroVelocity.z *= 1.3;
+        heroVelocity.y = Math.max(heroVelocity.y, 0) + 8;
+        maxV = 64;
+        showMsg('SUPER SWING! ⚡', 900);
+      }
       const v = heroVelocity.length();
-      if (v > 48) heroVelocity.multiplyScalar(48 / v);
+      if (v > maxV) heroVelocity.multiplyScalar(maxV / v);
     }
 
     // Web-zip: shoot a web at the rooftop in front and zip straight onto it
@@ -1833,8 +1931,9 @@ export default function SkylineSwingerMobile() {
 
       // smooth the raw joystick input so movement eases in/out instead of snapping
       const kb = keyAxis();
-      const targetJoyX = scope ? 0 : joystick.active ? joystick.x : kb.x;
-      const targetJoyY = scope ? 0 : joystick.active ? joystick.y : kb.y;
+      const still = scope || focus.focusing; // binoculars / Focus: the hero stands still
+      const targetJoyX = still ? 0 : joystick.active ? joystick.x : kb.x;
+      const targetJoyY = still ? 0 : joystick.active ? joystick.y : kb.y;
       const smoothing = 1 - Math.pow(0.001, dt); // frame-rate independent lerp
       smoothedJoy.x += (targetJoyX - smoothedJoy.x) * smoothing;
       smoothedJoy.y += (targetJoyY - smoothedJoy.y) * smoothing;
@@ -1852,6 +1951,14 @@ export default function SkylineSwingerMobile() {
         heroVelocity.y += GRAVITY * dt;
         heroVelocity.x += moveX * 22 * dt;
         heroVelocity.z += moveZ * 22 * dt;
+        if (superSwingOn) {
+          // Super Swing: extra push along the direction of travel = faster swing
+          const hs = Math.hypot(heroVelocity.x, heroVelocity.z);
+          if (hs > 0.5) {
+            heroVelocity.x += (heroVelocity.x / hs) * 16 * dt;
+            heroVelocity.z += (heroVelocity.z / hs) * 16 * dt;
+          }
+        }
         // slight air resistance keeps the swing from feeling twitchy
         heroVelocity.multiplyScalar(0.999);
         hero.position.addScaledVector(heroVelocity, dt);
@@ -1874,7 +1981,7 @@ export default function SkylineSwingerMobile() {
         heroVelocity.x += (moveX * speed - heroVelocity.x) * smoothing;
         heroVelocity.z += (moveZ * speed - heroVelocity.z) * smoothing;
         heroVelocity.y += GRAVITY * dt;
-        if (onGround && jumpPressed) { heroVelocity.y = 11; sfxJump(); }
+        if (onGround && jumpPressed && !focus.focusing) { heroVelocity.y = 11; sfxJump(); }
         hero.position.addScaledVector(heroVelocity, dt);
       }
 
@@ -2117,6 +2224,9 @@ export default function SkylineSwingerMobile() {
 
     function damagePlayer(amount, knockDir = null, knockForce = 0) {
       if (invincibleT > 0) return;
+      if (focus.absorbHit()) { invincibleT = 0.8; return; }
+      focus.interrupt();
+      sinceHitT = 0;
       playerHealth = Math.max(0, playerHealth - amount);
       invincibleT = 0.8;
       setHealth(playerHealth);
@@ -2215,7 +2325,8 @@ export default function SkylineSwingerMobile() {
       for (const en of enemies) {
         if (!en.alive) continue;
         if (en.indoor && !indoorBotActive(en)) continue;
-        const distToPlayer = en.mesh.position.distanceTo(hero.position);
+        // Stealth Mode: Voltbots and drones lose track of the hero
+        const distToPlayer = focus.stealth ? Infinity : en.mesh.position.distanceTo(hero.position);
 
         if (en.hitFlashT > 0) {
           en.hitFlashT -= dt;
@@ -2502,6 +2613,46 @@ export default function SkylineSwingerMobile() {
       console.error(msg, err);
       setFatalError(`${msg}\n${stack}\n${navigator.userAgent}`);
     }
+    // Focus Charge, every frame: charge, health, Super Swing trail, ring + meter on screen
+    const _ringPos = new THREE.Vector3();
+    let shownHealth = 100;
+    function updateFocus(dt, t) {
+      focus.update(dt, t);
+      sinceHitT += dt;
+      // health only comes back while focusing (or slowly on its own when
+      // Mission Control has switched Focus requirements off)
+      const regen = focus.focusing ? 6 : !focusRequiredRef.current && sinceHitT > 4 ? 4 : 0;
+      if (regen && playerHealth < 100) {
+        playerHealth = Math.min(100, playerHealth + regen * dt);
+        if (Math.round(playerHealth) !== shownHealth) { shownHealth = Math.round(playerHealth); setHealth(playerHealth); }
+      } else shownHealth = Math.round(playerHealth);
+      if (superSwingOn || superTrailT > 0) {
+        if (!superSwingOn) superTrailT -= dt;
+        spawnBurst(hero.position.clone().add(new THREE.Vector3(0, -0.2, 0)), 0x9ff8ff, 1, { speed: 0.4, life: 0.5, size: 1.4, gravity: 0 });
+      }
+      const ring = focusRingRef.current;
+      if (ring) {
+        const s = focus.ring;
+        if (!focus.focusing) ring.style.display = 'none';
+        else {
+          _ringPos.copy(hero.position).project(camera);
+          const w = mount.clientWidth, h = mount.clientHeight;
+          const d = Math.min(w, h) * 0.42 * (0.45 + 0.55 * s);
+          ring.style.display = 'block';
+          ring.style.width = ring.style.height = `${d}px`;
+          ring.style.left = `${(_ringPos.x + 1) / 2 * w - d / 2}px`;
+          ring.style.top = `${(1 - _ringPos.y) / 2 * h - d / 2}px`;
+          ring.style.opacity = String(0.55 + 0.45 * s);
+          if (focusCueRef.current && focusCueRef.current.textContent !== focus.cue) focusCueRef.current.textContent = focus.cue;
+        }
+      }
+      if (focusFillRef.current) focusFillRef.current.style.width = `${focus.progress * 100}%`;
+      if (focusBtnRef.current) {
+        focusBtnRef.current.style.boxShadow = focus.focusing ? `0 0 ${10 + focus.ring * 26}px rgba(94,242,255,0.9)` : 'none';
+        focusBtnRef.current.style.opacity = focus.holding && !focus.focusing ? '0.6' : '1';
+      }
+    }
+
     function animate() {
       animationId = requestAnimationFrame(animate);
       try {
@@ -2519,6 +2670,8 @@ export default function SkylineSwingerMobile() {
       story.update(dt, t);
       if (story.inCutscene) {
         // movie scene: the story drives the camera; the hero and enemies wait
+        focus.interrupt();
+        if (focusRingRef.current) focusRingRef.current.style.display = 'none';
         updateParticles(dt);
         updateClouds(dt);
         updateCars(dt);
@@ -2543,7 +2696,8 @@ export default function SkylineSwingerMobile() {
         }
       }
       updateHero(dt, t);
-      realHero.update(dt, heroAnimState());
+      updateFocus(dt, t);
+      realHero.update(dt, { ...heroAnimState(), breath: focus.ring });
       updateBuildingEntry(dt);
       updateInterior(dt);
       updateEnemies(dt, t);
@@ -2693,6 +2847,7 @@ export default function SkylineSwingerMobile() {
       return { x, y };
     }
     function onKeyDown(e) {
+      if (e.target && e.target.tagName === 'INPUT') return; // typing a Mission Control code
       const k = e.key.toLowerCase();
       if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
       if (e.repeat) return;
@@ -2708,14 +2863,20 @@ export default function SkylineSwingerMobile() {
       if (k === 'q') doDodge();
       if (k === 'r') startZip();
       if (k === 'b') setScope(!scope);
+      if (k === 'c') focus.press(true);
+      if (k === '1') focus.spend('swing');
+      if (k === '2') focus.spend('shield');
+      if (k === '3') focus.spend('stealth');
     }
     function onKeyUp(e) {
       const k = e.key.toLowerCase();
       keys.delete(k);
       if (k === ' ') jumpPressed = false;
       if (k === 'e') onWebEnd(noop);
+      if (k === 'c') focus.press(false);
     }
     function onBlur() {
+      focus.press(false);
       if (keys.has('e')) onWebEnd(noop);
       keys.clear();
       jumpPressed = false;
@@ -2813,6 +2974,8 @@ export default function SkylineSwingerMobile() {
         get inside() { return insideBuilding && insideBuilding.type; },
         get floor() { return currentFloor; },
         get onGround() { return onGround; },
+        focus,
+        hurt: (n) => damagePlayer(n),
       };
     }
     animate();
@@ -2820,6 +2983,7 @@ export default function SkylineSwingerMobile() {
     return () => {
       cancelAnimationFrame(animationId);
       clearTimeout(msgTimeout);
+      focus.press(false);
       container.removeEventListener('touchstart', handleTouchStart);
       container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
@@ -2872,13 +3036,17 @@ export default function SkylineSwingerMobile() {
             padding: '6px 12px', borderRadius: 10, fontSize: 12, lineHeight: 1.4
           }}>
             {isTouch
-              ? <>Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Walk into a glowing doorway to go inside</>
-              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; R: zip &nbsp; F: fight &nbsp; Q: dodge &nbsp; 💀 on the map = boss</>}
+              ? <>Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Hold FOCUS to charge powers &nbsp; Walk into a glowing doorway to go inside</>
+              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; R: zip &nbsp; F: fight &nbsp; Q: dodge &nbsp; Hold C: focus &nbsp; 1 / 2 / 3: powers &nbsp; 💀 on the map = boss</>}
           </div>
-          <div style={{
-            position: 'absolute', top: 10, right: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
-            padding: '8px 14px', borderRadius: 10, fontSize: 14, fontWeight: 'bold', textAlign: 'right'
-          }}>
+          <div data-ui
+            onPointerDown={mcPressStart} onPointerUp={mcPressEnd} onPointerCancel={mcPressEnd} onPointerLeave={mcPressEnd}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{
+              position: 'absolute', top: 10, right: 10, color: '#fff', background: 'rgba(0,0,0,0.35)',
+              padding: '8px 14px', borderRadius: 10, fontSize: 14, fontWeight: 'bold', textAlign: 'right',
+              userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none'
+            }}>
             <div>Orbs: {score}</div>
             <div>Voltbots: {defeated}</div>
           </div>
@@ -3041,6 +3209,75 @@ export default function SkylineSwingerMobile() {
             FIGHT
           </div>
 
+          {/* Focus Charge: the ring around the hero (moved every frame by updateFocus) */}
+          <div ref={focusRingRef} style={{
+            position: 'absolute', display: 'none', borderRadius: '50%', pointerEvents: 'none',
+            border: '3px solid rgba(140,248,255,0.95)',
+            boxShadow: '0 0 18px rgba(94,242,255,0.8), inset 0 0 18px rgba(94,242,255,0.5)'
+          }}>
+            <div ref={focusCueRef} style={{
+              position: 'absolute', left: '50%', bottom: -26, transform: 'translateX(-50%)',
+              color: '#bdfbff', fontSize: 13, fontWeight: 'bold', letterSpacing: 3, textShadow: '0 0 8px rgba(94,242,255,0.9), 0 1px 2px #000'
+            }}>CHARGE</div>
+          </div>
+
+          {/* FOCUS button (hold) */}
+          <div ref={focusBtnRef} data-ui
+            onPointerDown={(e) => { e.stopPropagation(); focusRef.current && focusRef.current.press(true); }}
+            onPointerUp={() => focusRef.current && focusRef.current.press(false)}
+            onPointerCancel={() => focusRef.current && focusRef.current.press(false)}
+            onPointerLeave={() => focusRef.current && focusRef.current.press(false)}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{
+              position: 'absolute', right: 212, bottom: 104, width: 62, height: 62, borderRadius: '50%',
+              background: 'rgba(94,242,255,0.28)', border: '2px solid rgba(140,248,255,0.9)',
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, fontWeight: 'bold', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
+              cursor: 'pointer', touchAction: 'none', textShadow: '0 1px 2px #000'
+            }}>
+            FOCUS{isTouch ? '' : ' (C)'}
+          </div>
+
+          {/* Focus Meter + powers to spend it on */}
+          <div data-ui style={{
+            position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, userSelect: 'none'
+          }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ color: '#bdfbff', fontSize: 10, fontWeight: 'bold', letterSpacing: 1, textShadow: '0 1px 2px #000' }}>FOCUS</span>
+              {Array.from({ length: FOCUS_SEGMENTS }, (_, i) => (
+                <div key={i} style={{
+                  width: 34, height: 10, borderRadius: 5, overflow: 'hidden',
+                  background: 'rgba(0,0,0,0.45)', border: '1.5px solid rgba(140,248,255,0.7)',
+                  boxShadow: i < focusHud.meter ? '0 0 8px rgba(94,242,255,0.9)' : 'none'
+                }}>
+                  <div ref={i === focusHud.meter ? focusFillRef : null} style={{
+                    height: '100%', width: i < focusHud.meter ? '100%' : '0%',
+                    background: 'linear-gradient(90deg,#5ef2ff,#c9fdff)'
+                  }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {Object.entries(REWARDS).map(([kind, r], i) => {
+                const active = (kind === 'swing' && focusHud.superSwing) || (kind === 'shield' && focusHud.shield) || (kind === 'stealth' && focusHud.stealth);
+                const ok = focusHud.meter >= r.cost && !(kind === 'swing' && focusHud.superSwing);
+                return (
+                  <div key={kind}
+                    onPointerDown={(e) => { e.stopPropagation(); focusRef.current && focusRef.current.spend(kind); }}
+                    style={{
+                      padding: '5px 9px', borderRadius: 12, fontSize: 10, fontWeight: 'bold', color: '#fff', cursor: ok ? 'pointer' : 'default',
+                      background: active ? 'rgba(94,242,255,0.6)' : ok ? 'rgba(94,242,255,0.35)' : 'rgba(0,0,0,0.4)',
+                      border: `1.5px solid ${ok || active ? 'rgba(140,248,255,0.95)' : 'rgba(255,255,255,0.25)'}`,
+                      opacity: ok || active ? 1 : 0.55, textShadow: '0 1px 2px #000', whiteSpace: 'nowrap', touchAction: 'none'
+                    }}>
+                    {r.name} {'⚡'.repeat(r.cost)}{isTouch ? '' : ` (${i + 1})`}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {elevatorFloor !== null && (
             <div ref={elevatorPanelRef} style={{
               position: 'absolute', right: 20, top: '50%', transform: 'translateY(-50%)',
@@ -3194,6 +3431,31 @@ export default function SkylineSwingerMobile() {
               padding: '10px 18px', borderRadius: 20, fontSize: 15, boxShadow: '0 4px 18px rgba(0,0,0,0.4)'
             }}>
               🎉 {unlockToast}
+            </div>
+          )}
+
+          {/* Mission Control (adult-only, opened by long-pressing the score box) */}
+          {mc && (
+            <div data-ui onPointerDown={(e) => { if (e.target === e.currentTarget) setMc(null); }} style={{
+              position: 'absolute', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              <form onSubmit={(e) => { e.preventDefault(); mcSubmit(); }} style={{
+                width: 'min(300px, 88%)', background: 'rgba(14,20,32,0.97)', border: '2px solid rgba(94,242,255,0.6)',
+                borderRadius: 16, padding: 16, color: '#fff', textAlign: 'center', fontSize: 14
+              }}>
+                <div style={{ fontWeight: 'bold', letterSpacing: 2, marginBottom: 10 }}>MISSION CONTROL</div>
+                {mc.setup && <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>Choose a code for this device.</div>}
+                <input ref={mcCodeRef} type="password" autoFocus autoComplete="off" autoCapitalize="off" autoCorrect="off"
+                  placeholder={mc.setup ? 'New code' : 'Code'} style={mcInputStyle} />
+                {mc.setup && <input ref={mcCode2Ref} type="password" autoComplete="off" autoCapitalize="off" autoCorrect="off"
+                  placeholder="Type it again" style={mcInputStyle} />}
+                {mc.note && <div style={{ color: '#ffb3c1', fontSize: 12, marginBottom: 8 }}>{mc.note}</div>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div onClick={() => setMc(null)} style={{ flex: 1, padding: '9px 0', borderRadius: 10, background: 'rgba(255,255,255,0.12)', cursor: 'pointer' }}>Cancel</div>
+                  <button type="submit" style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: 'none', background: '#22c55e', color: '#fff', fontWeight: 'bold', fontSize: 14, cursor: 'pointer' }}>OK</button>
+                </div>
+              </form>
             </div>
           )}
 
