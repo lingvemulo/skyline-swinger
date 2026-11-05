@@ -43,7 +43,8 @@ export function normalizeProgress(p) {
 // api: { hero, heroVel, heroRig, camera, buildings, CITY_SIZE, damagePlayer(amount, dir, force),
 //        spawnBurst, triggerShake, playTone, playNoise, showMsg, healHero(),
 //        onUi(ui), onHud(list|null), onDanger(bool), getProgress(), setProgress(p),
-//        busyReason() -> string|null, freezeHero(), resetCamera(), setBossesPaused(bool) }
+//        busyReason() -> string|null, freezeHero(), resetCamera(), setBossesPaused(bool),
+//        callsOn() -> bool (false = Kai doesn't phone) }
 export function createStory(THREE, scene, api) {
   const hero = api.hero;
   const camera = api.camera;
@@ -251,7 +252,9 @@ export function createStory(THREE, scene, api) {
       return;
     }
     const title = result === 'won' ? 'YOU WON! 🏆' : result === 'lost' ? 'YOU LOST... BUT THE STORY GOES ON!' : 'MISSION COMPLETE! ✅';
-    const sub = p.next < READY && n === p.next ? 'Kai will call you soon about the next mission 📱' : `Mission ${n}: ${MISSIONS[n - 1].title}`;
+    const sub = p.next < READY && n === p.next
+      ? (callsOn() ? 'Kai will call you soon about the next mission 📱' : 'Next mission unlocked in 📖 STORY')
+      : `Mission ${n}: ${MISSIONS[n - 1].title}`;
     banner(title, sub, 6);
   }
   function startMission(i) {
@@ -274,7 +277,14 @@ export function createStory(THREE, scene, api) {
     call = { t: 0, beep: 0 };
     setUi({ call: { from: 'KAI', sub: 'Your best friend' } });
   }
+  // Kai's calls can be switched off in the 📖 STORY menu (missions stay playable from there)
+  const callsOn = () => !api.callsOn || api.callsOn();
   function updatePhone(dt) {
+    if (!callsOn()) {
+      if (call) { call = null; setUi({ call: null }); }
+      freeT = 0;
+      return;
+    }
     if (call) {
       call.t += dt;
       call.beep -= dt;

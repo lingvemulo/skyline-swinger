@@ -46,7 +46,7 @@ export default function SkylineSwingerMobile() {
   };
   const [save, setSave] = useState(() => {
     const s0 = loadSave();
-    return { outfit: s0.outfit || 'classic', mask: s0.mask !== false, unlocked: s0.unlocked || [], bossesBeaten: s0.bossesBeaten || [], story: normalizeProgress(s0.story) };
+    return { outfit: s0.outfit || 'classic', mask: s0.mask !== false, unlocked: s0.unlocked || [], bossesBeaten: s0.bossesBeaten || [], story: normalizeProgress(s0.story), storyOn: s0.storyOn !== false };
   });
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
   // Full screen: real Fullscreen API where the browser has it (iPad, Android,
@@ -2537,6 +2537,7 @@ export default function SkylineSwingerMobile() {
       onDanger: (on) => setDangerFrom('story', on),
       getProgress: () => saveRef.current.story,
       setProgress: (p) => setSave(s => ({ ...s, story: p })),
+      callsOn: () => saveRef.current.storyOn,
       busyReason: () => insideBuilding ? 'Go outside first!' : bosses.inFight ? 'Finish the boss fight first!' : null,
       freezeHero: () => {
         setScope(false);
@@ -3478,8 +3479,20 @@ export default function SkylineSwingerMobile() {
                 <b style={{ fontSize: 15, color: '#ffd23f' }}>📖 Story Mode</b>
                 <span onClick={() => setStoryOpen(false)} style={{ cursor: 'pointer', fontSize: 18, padding: '0 4px' }}>✕</span>
               </div>
+              <div onClick={() => setSave(s => ({ ...s, storyOn: !s.storyOn }))} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 9px', marginBottom: 8,
+                borderRadius: 10, cursor: 'pointer', background: 'rgba(255,255,255,0.07)'
+              }}>
+                <span style={{ fontSize: 12, fontWeight: 'bold' }}>📱 Kai's calls</span>
+                <span style={{
+                  padding: '3px 12px', borderRadius: 12, fontSize: 12, fontWeight: 'bold',
+                  background: save.storyOn ? '#22c55e' : 'rgba(255,255,255,0.18)'
+                }}>{save.storyOn ? 'ON' : 'OFF'}</span>
+              </div>
               <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 10 }}>
-                Kai calls you when a new mission is ready. You can replay finished missions here.
+                {save.storyOn
+                  ? 'Kai calls you when a new mission is ready. You can replay finished missions here.'
+                  : 'Free play: Kai won\'t call. Tap a mission below whenever you want to play one.'}
               </div>
               {MISSIONS.map((m, i) => {
                 const prog = save.story;
