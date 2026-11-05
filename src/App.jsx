@@ -121,10 +121,7 @@ export default function SkylineSwingerMobile() {
     outfitRef.current = { id: save.outfit, mask: save.mask };
     if (applyOutfitRef.current) applyOutfitRef.current(save.outfit, save.mask);
   }, [save]);
-  // TEMPORARY (2026-10-29): every suit unlocked so Max can try them all.
-  // Set back to false next session; saved progress is untouched.
-  const UNLOCK_ALL_SUITS = true;
-  const isUnlocked = (o) => UNLOCK_ALL_SUITS || !o.unlock || save.unlocked.includes(o.id);
+  const isUnlocked = (o) => !o.unlock || save.unlocked.includes(o.id);
   const unlockOutfit = useCallback((id) => {
     setSave(s => {
       if (s.unlocked.includes(id)) return s;
