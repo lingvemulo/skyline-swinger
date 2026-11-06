@@ -1199,13 +1199,14 @@ export default function SkylineSwingerMobile() {
     // "Um... hi?" / "Um... hi." — and there's an orb hidden in there.
     // Toilets are against the east wall (furniture.js restroom / apartment bathroom).
     // room: the restroom's walls [x0, x1, z0, z1] (interiors.js PARTITIONS)
+    // gag: a different silly thing in each building type's bathroom
     const TOILETS = {
-      hotel: { k: 0, x: 12.2, z: 11, orb: [12.1, 12.3], room: [6, 12.85, 7, 12.85] },
-      office: { k: 0, x: 12.2, z: 11, orb: [12.1, 12.3], room: [6, 12.85, 7, 12.85] },
-      shop: { k: 0, x: 12.2, z: 11.6, orb: [12.1, 9.3], room: [9.2, 12.85, 8.5, 12.85] },
-      apartment: { k: 1, x: 2.15, z: -7.4, orb: [2.3, -5.9], room: [-4, 3, -12.85, -5] },
+      hotel: { k: 0, x: 12.2, z: 11, orb: [12.1, 12.3], room: [6, 12.85, 7, 12.85], gag: 'newspaper' },
+      office: { k: 0, x: 12.2, z: 11, orb: [12.1, 12.3], room: [6, 12.85, 7, 12.85], gag: 'phone' },
+      shop: { k: 0, x: 12.2, z: 11.6, orb: [12.1, 9.3], room: [9.2, 12.85, 8.5, 12.85], gag: 'roll' },
+      apartment: { k: 1, x: 2.15, z: -7.4, orb: [2.3, -5.9], room: [-4, 3, -12.85, -5], gag: 'duck' },
     };
-    for (const [type, tp] of Object.entries(TOILETS)) PEOPLE[type].push([tp.k, tp.x, tp.z, 'sit', -Math.PI / 2, true]);
+    for (const [type, tp] of Object.entries(TOILETS)) PEOPLE[type].push([tp.k, tp.x, tp.z, 'sit', -Math.PI / 2, tp.gag]);
     const indoorPeople = [];
     for (const [type, list] of Object.entries(PEOPLE)) {
       const it = interiors[type];
@@ -1223,7 +1224,7 @@ export default function SkylineSwingerMobile() {
         it.group.add(p.grp); // shown/hidden with its building
         const spec = randomCivilian();
         if (onToilet) spec.outfit = { ...spec.outfit, shorts: false, pantsDown: true };
-        indoorPeople.push({ ...p, mode, spec, onToilet, realOffset: mode === 'sit' ? 0.3 : 0,
+        indoorPeople.push({ ...p, mode, spec, onToilet, gag: onToilet || null, realOffset: mode === 'sit' ? 0.3 : 0,
           idleClip: mode === 'sit' ? 'Sitting_Idle_Loop' : Math.random() < 0.5 ? 'Idle_Talking_Loop' : 'Idle_Loop',
           from: new THREE.Vector3(x, y, z), to: mode === 'walk' ? new THREE.Vector3(arg[0], y, arg[1]) : null, leg: 1, phase: Math.random() * 6 });
       }
@@ -1238,19 +1239,178 @@ export default function SkylineSwingerMobile() {
       if (lx < x0 + 0.7 || lx > x1 - 0.7 || lz < z0 + 0.7 || lz > z1 - 0.7) return;
       toiletMet = true;
       const sitter = indoorPeople.find(p => p.onToilet && p.grp.parent === insideBuilding.group);
-      playTone({ freq: 330, freqEnd: 300, duration: 0.25, type: 'triangle', gain: 0.1 });
-      showMsg('🚽 "Um... hi?"', 1900);
-      if (sitter && sitter.real) sitter.real.wave = 0.8;
-      setTimeout(() => {
-        showMsg('🦸 You: "Um... hi."', 1900);
-        playTone({ freq: 260, freqEnd: 240, duration: 0.25, type: 'triangle', gain: 0.1 });
-        if (sitter && sitter.real) sitter.real.wave = 0;
-      }, 2000);
+      const um = () => { showMsg('🚽 "Um... hi?"', 1900); playTone({ freq: 330, freqEnd: 300, duration: 0.25, type: 'triangle', gain: 0.1 }); };
+      const hi = () => { showMsg('🦸 You: "Um... hi."', 1900); playTone({ freq: 260, freqEnd: 240, duration: 0.25, type: 'triangle', gain: 0.1 }); };
+      const gag = sitter ? sitter.gag : null;
+      const g = sitter && sitter.gagState;
+      // [ms from now, what happens]
+      const script = {
+        newspaper: [[0, () => { if (g) g.peek = 1; sfxRustle(); um(); }], [2000, hi], [4000, () => { if (g) g.peek = 0; sfxRustle(); }]],
+        phone: [[0, () => showMsg('📱 "...yes, the meeting is at three... oh, hang on."', 2300)], [2400, um], [4400, hi],
+          [6400, () => showMsg('📱 "Sorry, where was I?"', 1800)]],
+        roll: [[0, um], [2000, hi], [3900, () => { showMsg('🚽 "OCCUPIED!!" 🧻', 1600); throwRoll(sitter); }]],
+        duck: [[0, () => { sfxSqueak(); um(); if (g) g.bounce = 1; }], [2000, () => { hi(); sfxSqueak(); if (g) g.bounce = 1; }],
+          [3600, () => { showMsg('🦆 SQUEAK!', 1200); sfxSqueak(); if (g) g.bounce = 1; }]],
+      }[gag] || [[0, um], [2000, hi]];
+      if (sitter && sitter.real && (gag === 'roll' || gag === 'duck')) sitter.real.wave = 0.8;
+      for (const [ms, fn] of script) toiletTimers.push(setTimeout(fn, ms));
+      toiletTimers.push(setTimeout(() => { if (sitter && sitter.real) sitter.real.wave = 0; }, 2000));
     }
+    const toiletTimers = [];
+    function sfxSqueak() {
+      playTone({ freq: 1500, freqEnd: 2100, duration: 0.09, type: 'triangle', gain: 0.12 });
+      playTone({ freq: 1700, freqEnd: 1300, duration: 0.12, type: 'triangle', gain: 0.1, delay: 0.1 });
+    }
+    function sfxRustle() { playNoise({ duration: 0.25, gain: 0.12, filterFreq: 3500 }); }
+
+    // ---- bathroom props (made once the realistic person is loaded, then follow their bones) ----
+    const gagMats = {
+      paper: new THREE.MeshStandardMaterial({ map: newspaperTexture(), roughness: 0.95, side: THREE.DoubleSide }),
+      phone: new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.35, metalness: 0.4 }),
+      duck: new THREE.MeshStandardMaterial({ color: 0xffd21f, roughness: 0.5 }),
+      beak: new THREE.MeshStandardMaterial({ color: 0xff8a1f, roughness: 0.5 }),
+      eye: new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.3 }),
+      roll: new THREE.MeshStandardMaterial({ color: 0xf6f6f2, roughness: 0.9, side: THREE.DoubleSide }),
+    };
+    function newspaperTexture() {
+      const c = document.createElement('canvas');
+      c.width = 256; c.height = 180;
+      const x = c.getContext('2d');
+      x.fillStyle = '#efece2'; x.fillRect(0, 0, 256, 180);
+      x.fillStyle = '#1b1b1b'; x.font = 'bold 22px Georgia, serif'; x.textAlign = 'center';
+      x.fillText('THE DAILY SKYLINE', 128, 26);
+      x.fillRect(10, 34, 236, 2);
+      x.font = 'bold 15px Georgia, serif'; x.fillText('MYSTERY HERO SAVES CITY AGAIN!', 128, 54);
+      x.fillStyle = '#9aa3ad'; x.fillRect(12, 64, 100, 70);
+      x.fillStyle = '#c03030'; x.beginPath(); x.arc(62, 99, 18, 0, Math.PI * 2); x.fill();
+      x.fillStyle = '#555';
+      for (let r = 0; r < 9; r++) x.fillRect(122, 66 + r * 8, 120 - (r % 3) * 12, 3);
+      for (let r = 0; r < 4; r++) x.fillRect(12, 142 + r * 8, 230 - (r % 2) * 30, 3);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    }
+    function makeDuck() {
+      const d = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 10), gagMats.duck);
+      body.scale.set(1, 0.75, 1.25);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 10), gagMats.duck);
+      head.position.set(0, 0.12, 0.09);
+      const beak = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.025, 0.07), gagMats.beak);
+      beak.position.set(0, 0.11, 0.18);
+      d.add(body, head, beak);
+      for (const s of [-1, 1]) {
+        const e = new THREE.Mesh(new THREE.SphereGeometry(0.014, 6, 6), gagMats.eye);
+        e.position.set(s * 0.045, 0.15, 0.15);
+        d.add(e);
+      }
+      return d;
+    }
+    function setupGag(p) {
+      const parent = p.grp.parent;
+      const st = { peek: 0, peekT: 0, bounce: 0 };
+      if (p.gag === 'newspaper') {
+        st.obj = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.67), gagMats.paper);
+        p.real.hold = 1;
+      } else if (p.gag === 'phone') {
+        st.obj = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.2, 0.1), gagMats.phone);
+        p.real.phone = 1;
+      } else if (p.gag === 'duck') st.obj = makeDuck();
+      if (st.obj) parent.add(st.obj);
+      p.gagState = st;
+    }
+    const _gp = new THREE.Vector3(), _gq = new THREE.Vector3();
+    function updateGag(p, dt, t) {
+      const st = p.gagState;
+      if (!st.obj) return;
+      st.obj.visible = !!(p.real && p.real.group.visible);
+      if (!st.obj.visible) return;
+      const parent = p.grp.parent;
+      const yawP = p.grp.rotation.y;
+      const fwd = _gq.set(Math.sin(yawP), 0, Math.cos(yawP));
+      st.obj.rotation.set(0, yawP, 0);
+      if (p.gag === 'newspaper') {
+        // held up in front of the face; lowered a bit to peek over it
+        st.peekT += ((st.peek ? 1 : 0) - st.peekT) * Math.min(1, dt * 6);
+        p.real.bone('Head').getWorldPosition(_gp);
+        _gp.addScaledVector(fwd, 0.42);
+        _gp.y += 0.02 - st.peekT * 0.32;
+        p.real.hold = 1 - st.peekT * 0.25;
+      } else if (p.gag === 'phone') {
+        p.real.bone('hand_r').getWorldPosition(_gp);
+        _gp.y += 0.06;
+      } else if (p.gag === 'duck') {
+        p.real.bone('Head').getWorldPosition(_gp);
+        st.bounce = Math.max(0, st.bounce - dt * 2.5);
+        _gp.y += 0.32 + Math.sin(st.bounce * Math.PI) * 0.18;
+        st.obj.rotation.z = Math.sin(t * 2) * 0.08;
+      }
+      st.obj.position.copy(_gp).sub(parent.position);
+    }
+
+    // Shop gag: a toilet roll flies at the hero, bounces and unrolls across the floor (no damage)
+    const rolls = [];
+    function throwRoll(sitter) {
+      if (!insideBuilding || !sitter) return;
+      const parent = insideBuilding.group;
+      const from = new THREE.Vector3();
+      (sitter.real ? sitter.real.bone('hand_r') : sitter.grp).getWorldPosition(from);
+      const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.2, 14), gagMats.roll);
+      roll.position.copy(from).sub(parent.position);
+      parent.add(roll);
+      const to = hero.position.clone().sub(parent.position);
+      const dir = new THREE.Vector3(to.x - roll.position.x, 0, to.z - roll.position.z);
+      const d = Math.max(1, dir.length());
+      dir.normalize();
+      const floorY = currentFloor * FLOOR_H + 0.13;
+      sfxSwing();
+      rolls.push({ roll, parent, vel: new THREE.Vector3(dir.x * d * 1.1, 4.5, dir.z * d * 1.1), dir, floorY, landed: null, strip: null, life: 12 });
+    }
+    function updateRolls(dt) {
+      for (let i = rolls.length - 1; i >= 0; i--) {
+        const r = rolls[i];
+        r.life -= dt;
+        if (!r.landed) {
+          r.vel.y += GRAVITY * dt;
+          r.roll.position.addScaledVector(r.vel, dt);
+          r.roll.rotation.x += dt * 12;
+          if (r.roll.position.y <= r.floorY) {
+            r.roll.position.y = r.floorY;
+            r.landed = r.roll.position.clone();
+            r.speed = Math.max(2.5, Math.hypot(r.vel.x, r.vel.z) * 0.6);
+            sfxLand();
+            // the unrolled paper trail
+            r.strip = new THREE.Mesh(new THREE.PlaneGeometry(0.19, 1), gagMats.roll);
+            r.strip.rotation.set(-Math.PI / 2, 0, -Math.atan2(r.dir.x, r.dir.z) + Math.PI);
+            r.strip.scale.y = 0.001;
+            r.parent.add(r.strip);
+          }
+        } else if (r.speed > 0) {
+          r.roll.position.addScaledVector(r.dir, r.speed * dt);
+          r.speed = Math.max(0, r.speed - dt * 1.6);
+          // roll on its side, axis across the direction of travel
+          r.roll.rotation.set(0, Math.atan2(r.dir.x, r.dir.z), 0);
+          r.roll.rotateZ(Math.PI / 2);
+          const len = r.roll.position.distanceTo(r.landed);
+          r.strip.scale.y = Math.max(0.001, len);
+          r.strip.position.copy(r.landed).lerp(r.roll.position, 0.5);
+          r.strip.position.y = currentFloor * FLOOR_H + 0.01;
+        }
+        if (r.life <= 0 || !r.parent.visible) {
+          r.parent.remove(r.roll);
+          if (r.strip) r.parent.remove(r.strip);
+          rolls.splice(i, 1);
+        }
+      }
+    }
+
     function updateIndoorPeople(dt, t) {
       updateToiletVisit();
+      updateRolls(dt);
       for (const p of indoorPeople) {
         if (!p.grp.parent.visible) continue;
+        if (p.gag && p.real && !p.gagState) setupGag(p);
+        if (p.gagState) updateGag(p, dt, t);
         realLOD(p, dt, true, p.mode === 'walk' ? 'Walk_Loop' : p.idleClip, p.mode === 'walk' ? 1.15 : 1);
         if (p.mode === 'walk') {
           const target = p.leg ? p.to : p.from;
@@ -3023,6 +3183,7 @@ export default function SkylineSwingerMobile() {
         get onGround() { return onGround; },
         focus,
         hurt: (n) => damagePlayer(n),
+        toiletPeople: indoorPeople.filter(p => p.onToilet),
       };
     }
     animate();
@@ -3030,6 +3191,7 @@ export default function SkylineSwingerMobile() {
     return () => {
       cancelAnimationFrame(animationId);
       clearTimeout(msgTimeout);
+      toiletTimers.forEach(clearTimeout);
       focus.press(false);
       container.removeEventListener('touchstart', handleTouchStart);
       container.removeEventListener('touchmove', handleTouchMove);

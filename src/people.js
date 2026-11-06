@@ -193,7 +193,7 @@ function outfitMaterial(THREE, base, eye) {
 // ---------- one person ----------
 // spec: { sex, skin, hair, beard, hairColour, scale, outfit: { mode: 'clothes', top, sleeve|'skin', legs, shoes, shorts, pantsDown }
 //        or { mode: 'suit', main, second, accent, emblem, emblemOn, mask, maskCol, lens, metal, hex } }
-// returns { group, model, play(name, { fade, once, speed }), update(dt), bone(name), armsUp, wave, setOutfit(o) }
+// returns { group, model, play(name, { fade, once, speed }), update(dt), bone(name), armsUp, wave, hold, phone, setOutfit(o) }
 export function makeRealPerson(spec) {
   if (!A) return null;
   const THREE = A.THREE;
@@ -314,10 +314,27 @@ export function makeRealPerson(spec) {
     group, model, play, setOutfit, bone: B, uniforms: U, bodyMat: mat,
     armsUp: 0, // 0..1 both arms straight up (falling under a parachute, cheering)
     wave: 0,   // 0..1 right arm waving for help
+    hold: 0,   // 0..1 both hands up in front of the face (reading a newspaper)
+    phone: 0,  // 0..1 right hand up at the ear (on the phone)
     get clip() { return curName; },
     update(dt) {
       t += dt;
       mixer.update(dt);
+      if (person.hold > 0.01 || person.phone > 0.01) {
+        model.updateMatrixWorld(true);
+        const gq = group.getWorldQuaternion(new THREE.Quaternion());
+        const dir = (x, y, z) => new THREE.Vector3(x, y, z).applyQuaternion(gq).normalize();
+        if (person.hold > 0.01) {
+          for (const [ua, la, hand, side] of [[bones.uaR, bones.laR, bones.hR, 1], [bones.uaL, bones.laL, bones.hL, -1]]) {
+            aim(ua, la, dir(side * 0.25, -0.55, 0.8), person.hold);
+            aim(la, hand, dir(side * -0.3, 0.8, 0.5), person.hold);
+          }
+        }
+        if (person.phone > 0.01) {
+          aim(bones.uaR, bones.laR, dir(0.7, -0.15, 0.5), person.phone);
+          aim(bones.laR, bones.hR, dir(-0.5, 0.8, -0.35), person.phone);
+        }
+      }
       if (person.armsUp > 0.01 || person.wave > 0.01) {
         model.updateMatrixWorld(true);
         const up = new THREE.Vector3(0, 1, 0);
