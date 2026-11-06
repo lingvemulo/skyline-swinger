@@ -1194,10 +1194,22 @@ export default function SkylineSwingerMobile() {
         [1, 5.1, -11.4, 'sit', Math.PI], [1, -5, 1, 'walk', [6, 1]], [2, -1.2, -10.4, 'sit', 0], [2, 2, -10.4, 'sit', 0],
         [2, 0.4, -6.8, 'sit', Math.PI], [2, 5.6, 4.3, 'stand', 0], [2, 5.6, 9.7, 'stand', Math.PI]],
     };
+    // Max's idea: someone is always on the toilet in every building's restroom
+    // (trousers round the ankles, boxers on). Walking in gets an awkward
+    // "Um... hi?" / "Um... hi." — and there's an orb hidden in there.
+    // Toilets are against the east wall (furniture.js restroom / apartment bathroom).
+    // room: the restroom's walls [x0, x1, z0, z1] (interiors.js PARTITIONS)
+    const TOILETS = {
+      hotel: { k: 0, x: 12.2, z: 11, orb: [12.1, 12.3], room: [6, 12.85, 7, 12.85] },
+      office: { k: 0, x: 12.2, z: 11, orb: [12.1, 12.3], room: [6, 12.85, 7, 12.85] },
+      shop: { k: 0, x: 12.2, z: 11.6, orb: [12.1, 9.3], room: [9.2, 12.85, 8.5, 12.85] },
+      apartment: { k: 1, x: 2.15, z: -7.4, orb: [2.3, -5.9], room: [-4, 3, -12.85, -5] },
+    };
+    for (const [type, tp] of Object.entries(TOILETS)) PEOPLE[type].push([tp.k, tp.x, tp.z, 'sit', -Math.PI / 2, true]);
     const indoorPeople = [];
     for (const [type, list] of Object.entries(PEOPLE)) {
       const it = interiors[type];
-      for (const [k, x, z, mode, arg] of list) {
+      for (const [k, x, z, mode, arg, onToilet] of list) {
         const p = makePedestrian();
         p.grp.scale.setScalar(1.4); // match the hero's size
         const y = k * FLOOR_H;
@@ -1209,12 +1221,34 @@ export default function SkylineSwingerMobile() {
         if (mode === 'walk') p.grp.lookAt(arg[0], p.grp.position.y, arg[1]);
         else p.grp.rotation.y = arg;
         it.group.add(p.grp); // shown/hidden with its building
-        indoorPeople.push({ ...p, mode, spec: randomCivilian(), realOffset: mode === 'sit' ? 0.3 : 0,
+        const spec = randomCivilian();
+        if (onToilet) spec.outfit = { ...spec.outfit, shorts: false, pantsDown: true };
+        indoorPeople.push({ ...p, mode, spec, onToilet, realOffset: mode === 'sit' ? 0.3 : 0,
           idleClip: mode === 'sit' ? 'Sitting_Idle_Loop' : Math.random() < 0.5 ? 'Idle_Talking_Loop' : 'Idle_Loop',
           from: new THREE.Vector3(x, y, z), to: mode === 'walk' ? new THREE.Vector3(arg[0], y, arg[1]) : null, leg: 1, phase: Math.random() * 6 });
       }
     }
+    let toiletMet = false; // the "Um... hi?" happens once per visit
+    function updateToiletVisit() {
+      const tp = insideBuilding && TOILETS[insideBuilding.type];
+      if (!tp || toiletMet || currentFloor !== tp.k) return;
+      // fires once the hero is properly through the restroom door
+      const o = insideBuilding.origin, [x0, x1, z0, z1] = tp.room;
+      const lx = hero.position.x - o.x, lz = hero.position.z - o.z;
+      if (lx < x0 + 0.7 || lx > x1 - 0.7 || lz < z0 + 0.7 || lz > z1 - 0.7) return;
+      toiletMet = true;
+      const sitter = indoorPeople.find(p => p.onToilet && p.grp.parent === insideBuilding.group);
+      playTone({ freq: 330, freqEnd: 300, duration: 0.25, type: 'triangle', gain: 0.1 });
+      showMsg('🚽 "Um... hi?"', 1900);
+      if (sitter && sitter.real) sitter.real.wave = 0.8;
+      setTimeout(() => {
+        showMsg('🦸 You: "Um... hi."', 1900);
+        playTone({ freq: 260, freqEnd: 240, duration: 0.25, type: 'triangle', gain: 0.1 });
+        if (sitter && sitter.real) sitter.real.wave = 0;
+      }, 2000);
+    }
     function updateIndoorPeople(dt, t) {
+      updateToiletVisit();
       for (const p of indoorPeople) {
         if (!p.grp.parent.visible) continue;
         realLOD(p, dt, true, p.mode === 'walk' ? 'Walk_Loop' : p.idleClip, p.mode === 'walk' ? 1.15 : 1);
@@ -1257,6 +1291,17 @@ export default function SkylineSwingerMobile() {
         orbs.push(orb);
         indoorOrbs.push(orb);
       });
+      // the orb hidden in the restroom, low down next to the toilet
+      const tp = TOILETS[interior.type];
+      if (tp && !prog.orbs.has('toilet')) {
+        const orb = new THREE.Mesh(orbGeo, orbMat);
+        orb.scale.setScalar(0.4);
+        orb.position.set(o.x + tp.orb[0], tp.k * FLOOR_H + 0.4, o.z + tp.orb[1]);
+        orb.userData = { baseY: orb.position.y, bob: 0.06, phase: Math.random() * 6, indoorIdx: 'toilet' };
+        scene.add(orb);
+        orbs.push(orb);
+        indoorOrbs.push(orb);
+      }
       INDOOR_BOTS.forEach(([k, x, z], i) => {
         if (prog.bots.has(i)) return;
         const en = makeEnemy(o.x + x, o.z + z, k * FLOOR_H, 'grunt');
@@ -1342,6 +1387,7 @@ export default function SkylineSwingerMobile() {
       currentEnterable = ent;
       const interior = interiors[ent.type];
       populateInterior(ent, interior);
+      toiletMet = false;
       isSwinging = false;
       heroVelocity.set(0, 0, 0);
       if (via === 'roof') {
@@ -2209,7 +2255,7 @@ export default function SkylineSwingerMobile() {
     function updateOrbs(dt, t) {
       for (let i = orbs.length - 1; i >= 0; i--) {
         const orb = orbs[i];
-        orb.position.y = orb.userData.baseY + Math.sin(t * 1.5 + orb.userData.phase) * 1.5;
+        orb.position.y = orb.userData.baseY + Math.sin(t * 1.5 + orb.userData.phase) * (orb.userData.bob ?? 1.5);
         orb.rotation.y += dt * 2;
         if (hero.position.distanceTo(orb.position) < 2.2) {
           spawnBurst(orb.position.clone(), 0x5ef2ff, 8, { speed: 4, life: 0.35, size: 0.5, gravity: -10 });

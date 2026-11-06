@@ -98,7 +98,10 @@ function worldUV(geo, w, h, d, tile) {
 // and roof door (east wall, z = 0).
 const PARTITIONS = {
   hotel: [
-    [],
+    [
+      // restroom in the south-east corner (person on the toilet + hidden orb, see App.jsx TOILETS)
+      [6, 7, 6, 13], [6, 7, 7.5, 7], [8.9, 7, 13, 7],
+    ],
     [
       // north guest rooms
       [-4, -13, -4, -4], [2.2, -13, 2.2, -4], [8.5, -8.5, 8.5, -4],
@@ -120,12 +123,18 @@ const PARTITIONS = {
     [[3, 3, 3, 13], [3, 3, 6, 3], [7.4, 3, 13, 3]],
   ],
   shop: [
-    [],
+    [
+      // restroom in the south-east corner (person on the toilet + hidden orb, see App.jsx TOILETS)
+      [9.2, 8.5, 9.2, 13], [9.2, 8.5, 10, 8.5], [11.4, 8.5, 13, 8.5],
+    ],
     [],
     [[3, -4, 3, 4], [3, 5.4, 3, 13]],
   ],
   office: [
-    [],
+    [
+      // restroom in the south-east corner (person on the toilet + hidden orb, see App.jsx TOILETS)
+      [6, 7, 6, 13], [6, 7, 7.5, 7], [8.9, 7, 13, 7],
+    ],
     [[4.5, 3, 4.5, 13], [4.5, 3, 8, 3], [9.4, 3, 13, 3]],
     [[-4, -13, -4, -4], [6, -13, 6, -4], [-4, -4, 0, -4], [1.4, -4, 6, -4]],
   ],
@@ -134,10 +143,10 @@ const PARTITIONS = {
 // Doorways in the partitions that get a hinged door: [floor, wallZ or wallX,
 // 'z' (wall runs along x at z = c) or 'x' (wall runs along z at x = c), from, to].
 const DOORWAYS = {
-  hotel: [[1, -4, 'z', -2.5, -1.3], [1, -4, 'z', 3.3, 4.5], [1, 3, 'z', -5.4, -4.2], [1, 3, 'z', 0.9, 2.1], [1, 3, 'z', 8, 9.2]],
+  hotel: [[0, 7, 'z', 7.5, 8.9], [1, -4, 'z', -2.5, -1.3], [1, -4, 'z', 3.3, 4.5], [1, 3, 'z', -5.4, -4.2], [1, 3, 'z', 0.9, 2.1], [1, 3, 'z', 8, 9.2]],
   apartment: [[1, 3, 'z', -3, -1.6], [1, 3, 'z', 7, 8.4], [1, -5, 'z', -1, 0.4], [2, 3, 'z', 6, 7.4]],
-  shop: [[2, 3, 'x', 4, 5.4]],
-  office: [[1, 3, 'z', 8, 9.4], [2, -4, 'z', 0, 1.4]],
+  shop: [[0, 8.5, 'z', 10, 11.4], [2, 3, 'x', 4, 5.4]],
+  office: [[0, 7, 'z', 7.5, 8.9], [1, 3, 'z', 8, 9.4], [2, -4, 'z', 0, 1.4]],
 };
 
 // Stairwell: two switchback flights along the west wall.

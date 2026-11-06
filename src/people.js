@@ -160,10 +160,15 @@ function outfitMaterial(THREE, base, eye) {
           } else if (uMode > 1.5) {
             // everyday clothes: top, sleeves (or bare arms), trousers/shorts, shoes
             bool bareArm = (uSleeveSkin > 0.5 && ax > uEye.y * 0.15) || (uTopSkin > 0.5 && !legs);
-            bool bareLeg = uShorts > 0.5 && legs && y < hipY * 0.62;
+            // uShorts: 0 trousers, 1 shorts, 2 trousers down round the ankles (boxers still on)
+            bool down = uShorts > 1.5;
+            bool bareLeg = uShorts > 0.5 && legs && y < hipY * (down ? 0.7 : 0.62) && !(down && y < uEye.y * 0.15);
+            bool boxers = down && legs && !bareLeg && y >= hipY * 0.7;
             if (!head && !hand && !bareArm && !bareLeg) {
               cloth = 1.0;
               vec3 c = legs ? uLegs : (ax > uEye.y * 0.15 ? uSleeve : uTop);
+              if (boxers) c = mod(floor(vBindPos.x * 40.0), 2.0) < 1.0 ? vec3(0.92, 0.94, 1.0) : vec3(0.35, 0.55, 0.95);
+              else if (down && legs) c *= 0.8; // bunched-up trousers
               float weave = fract(sin(dot(floor(vMapUv * 500.0), vec2(12.9898, 78.233))) * 43758.5453);
               c *= legs ? 0.88 + 0.14 * weave : 0.94 + 0.08 * weave;
               diffuseColor.rgb = c * mix(1.0, shade, 0.25);
@@ -186,7 +191,7 @@ function outfitMaterial(THREE, base, eye) {
 }
 
 // ---------- one person ----------
-// spec: { sex, skin, hair, beard, hairColour, scale, outfit: { mode: 'clothes', top, sleeve|'skin', legs, shoes, shorts }
+// spec: { sex, skin, hair, beard, hairColour, scale, outfit: { mode: 'clothes', top, sleeve|'skin', legs, shoes, shorts, pantsDown }
 //        or { mode: 'suit', main, second, accent, emblem, emblemOn, mask, maskCol, lens, metal, hex } }
 // returns { group, model, play(name, { fade, once, speed }), update(dt), bone(name), armsUp, wave, setOutfit(o) }
 export function makeRealPerson(spec) {
@@ -257,7 +262,7 @@ export function makeRealPerson(spec) {
       U.uSleeve.value.set(o.sleeve && o.sleeve !== 'skin' ? o.sleeve : (o.top || '#888888'));
       U.uLegs.value.set(o.legs || '#2b3446');
       U.uShoes.value.set(o.shoes || '#f2f2f2');
-      U.uShorts.value = o.shorts ? 1 : 0;
+      U.uShorts.value = o.pantsDown ? 2 : o.shorts ? 1 : 0;
       U.uTopSkin.value = o.top === 'skin' ? 1 : 0;
       U.uFeetSkin.value = o.shoes === 'skin' ? 1 : 0;
     }

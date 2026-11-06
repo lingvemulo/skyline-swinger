@@ -396,6 +396,13 @@ export function furnish(THREE, api) {
   }
 
   const label = api.label;
+  // ground-floor restroom: door centred at doorX in the wall at z = wallZ,
+  // toilet against the east wall (someone's always on it — see App.jsx TOILETS)
+  const restroom = (doorX, wallZ, toiletZ, basinX = doorX) => {
+    add(toilet(), E(0.5), 0, toiletZ, ROT.E);
+    add(basin(), basinX, 0, So(0.42), ROT.S);
+    add(signBoard(label('WC 🚻', '#1b2433', '#ffffff'), 0.9, 0.35), doorX, 0, wallZ - 0.15, ROT.S, { solid: false });
+  };
   // ---------- per-type layouts ----------
   if (type === 'hotel') {
     // Floor 1: lobby
@@ -411,7 +418,8 @@ export function furnish(THREE, api) {
     add(sofa(0.95, M.sofaRed), 9.6, 0, 3.2, ROT.E);
     add(coffeeTable(0.6, 0.6), 7.4, 0, 3.2);
     add(floorLamp(), -6, 0, 3.2);
-    for (const [x, z] of [[-5.6, -11.8], [7.3, -11.8], [11.7, 11.7], [-6.2, 11.7], [11.7, -3.8]]) add(plant(), x, 0, z);
+    for (const [x, z] of [[-5.6, -11.8], [7.3, -11.8], [-6.2, 11.7], [11.7, -3.8]]) add(plant(), x, 0, z);
+    restroom(8.2, 7, 11);
     // Floor 2: guest rooms
     add(rug(10, 2.9, M.sofaRed), 0.8, 1, -0.5, 0, { solid: false });
     for (const [x, room] of [[-0.9, 'n'], [5.35, 'n'], [-4.4, 's'], [1.5, 's'], [8.7, 's']]) {
@@ -490,6 +498,7 @@ export function furnish(THREE, api) {
     add(register(), 7.6, 0, 7.2, 0, { solid: false });
     for (const x of [-5.5, -4.3]) add([...crateStack(1), B(0.7, 0.1, 0.7, pick([M.sofaRed, M.leaves2, M.pot]), 0, 0.85, 0)], x, 0, 6.5);
     add(signBoard(label('FRESH MARKET', '#1a1a1a', '#ff6b9a'), 3.2, 0.8), 1, 0, -12.8, ROT.N, { solid: false });
+    restroom(10.7, 8.5, 11.6, 10.3);
     // Floor 2: stockroom
     for (const z of [-9.5, -4.5, 0.5]) add(islandShelf(4, 2.2, M.products), 0.8, 1, z);
     for (const [x, z, n] of [[6, 8, 3], [7.2, 8, 2], [6, 9.2, 2], [-5, 10.6, 3], [-3.8, 10.6, 1], [-5, 9.4, 2], [10.5, 4.5, 2], [11.6, 4.5, 3]]) add(crateStack(n), x, 1, z);
@@ -515,7 +524,8 @@ export function furnish(THREE, api) {
     add(sofa(0.95, M.sofaBlue), -0.3, 0, 3, ROT.E);
     add(waterCooler(), 7, 0, N(0.35));
     add(wallTV(), 3.5, 0, So(0.05), ROT.S, { solid: false });
-    for (const [x, z] of [[-6.2, 11.7], [11.7, 11.7], [11.7, -3.8], [-5.8, -11.7]]) add(plant(), x, 0, z);
+    for (const [x, z] of [[-6.2, 11.7], [11.7, -3.8], [-5.8, -11.7]]) add(plant(), x, 0, z);
+    restroom(8.2, 7, 11);
     // Floor 2: desks
     for (let i = 0; i < 7; i++) add(desk(pick(chairMats)), -5.4 + i * 2.1, 1, N(0.7));
     for (let i = 0; i < 5; i++) {
