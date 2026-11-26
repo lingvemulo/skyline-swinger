@@ -632,6 +632,7 @@ function makeFighter(ctx, F, o) {
     f.hp -= dmg;
     f.flash = 0.15;
     api.spawnBurst(g.position.clone().add(V(0, o.height * 0.55, 0)), 0xffe066, 8, { speed: 6, life: 0.35, size: 0.8 });
+    if (o.model && o.model.real && api.bloodSplash) api.bloodSplash(g.position.clone().add(V(0, o.height * 0.55, 0))); // humans only, not robots/monsters
     if (!o.heavy) {
       g.position.add(V(g.position.x - hero.position.x, 0, g.position.z - hero.position.z).normalize().multiplyScalar(1.2));
       F.clamp(g.position, o.radius + 1);

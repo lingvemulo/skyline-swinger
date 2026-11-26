@@ -14,7 +14,7 @@ import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideI
 
 // Age-rating badges (Max's request). Our own designs, styled like European / American game ratings;
 // NOT the official PEGI/ESRB logos (the game isn't officially rated).
-const RATING_REASONS = 'Mild violence · Toilet humour';
+const RATING_REASONS = 'Mild violence · Mild blood · Toilet humour';
 function RatingBadges({ size = 1, reasons = true, style }) {
   const s = (n) => Math.round(n * size);
   return (
@@ -1855,6 +1855,10 @@ export default function SkylineSwingerMobile() {
     // ---------- Lightweight particle bursts (hit sparks, dust, explosions) ----------
     const particles = [];
     const particleGeo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+    // Mild cartoon blood (Bonnie OK'd 2026-11-26): a few small red drops that fall and fade. Hero + human villains only.
+    function bloodSplash(pos) {
+      spawnBurst(pos, 0xb3121b, 5, { speed: 4, life: 0.45, gravity: -20, size: 0.45 });
+    }
     function spawnBurst(pos, color, count = 10, opts = {}) {
       const { speed = 6, life = 0.5, gravity = -18, size = 1 } = opts;
       for (let i = 0; i < count; i++) {
@@ -2517,6 +2521,7 @@ export default function SkylineSwingerMobile() {
       sinceHitT = 0;
       playerHealth = Math.max(0, playerHealth - amount);
       invincibleT = 0.8;
+      if (!driving) bloodSplash(hero.position.clone().add(new THREE.Vector3(0, -0.2, 0)));
       setHealth(playerHealth);
       setHitFlash(true);
       setTimeout(() => setHitFlash(false), 150);
@@ -2817,7 +2822,7 @@ export default function SkylineSwingerMobile() {
     let dodgeCooldown = 0;
     let flipT = 0;
     const bosses = createBosses(THREE, scene, {
-      hero, heroVel: heroVelocity, damagePlayer, spawnBurst, triggerShake, playTone, playNoise, showMsg,
+      hero, heroVel: heroVelocity, damagePlayer, spawnBurst, bloodSplash, triggerShake, playTone, playNoise, showMsg,
       roof: bossRoof,
       onHud: (list) => setBossHud(list),
       onDanger: (on) => setDangerFrom('boss', on),
@@ -2827,7 +2832,7 @@ export default function SkylineSwingerMobile() {
     // ---------- Story mode (missions, phone calls, movie scenes) ----------
     const story = createStory(THREE, scene, {
       hero, heroVel: heroVelocity, heroRig, camera, buildings, CITY_SIZE, bossRoof,
-      damagePlayer, spawnBurst, triggerShake, playTone, playNoise, showMsg,
+      damagePlayer, spawnBurst, bloodSplash, triggerShake, playTone, playNoise, showMsg,
       healHero: () => { playerHealth = 100; setHealth(100); },
       onUi: (u) => setStoryUi(u),
       onHud: (list) => setStoryHud(list),

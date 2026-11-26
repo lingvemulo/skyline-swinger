@@ -981,6 +981,7 @@ export function createStory(THREE, scene, api) {
         nj.hp -= 22;
         nj.flash = 0.15;
         api.spawnBurst(g.position.clone().add(V(0, 1.4, 0)), 0xffe066, 8, { speed: 6, life: 0.35, size: 0.7 });
+        if (api.bloodSplash) api.bloodSplash(g.position.clone().add(V(0, 1.4, 0)));
         const k = V(g.position.x - hero.position.x, 0, g.position.z - hero.position.z).normalize().multiplyScalar(1.6);
         g.position.add(k);
         clampArena(g.position);

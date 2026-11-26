@@ -579,6 +579,7 @@ export function createBosses(THREE, scene, api) {
           b.hp -= 22;
           b.flashT = 0.15;
           api.spawnBurst(g.position.clone().add(new THREE.Vector3(0, 3.5, 0)), 0xffe066, 8, { speed: 6, life: 0.35, size: 0.8 });
+          if (b.type === 'brute' && api.bloodSplash) api.bloodSplash(g.position.clone().add(new THREE.Vector3(0, 4, 0)));
           if (b.hp <= 0) {
             b.state = 'dead';
             b.deadT = 0;
