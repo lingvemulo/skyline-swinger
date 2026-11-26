@@ -8,6 +8,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { createBosses, ARENA } from './bosses.js';
 import { mountChat } from './chat/chat-ui.js';
 import { createStory, MISSIONS, normalizeProgress } from './story.js';
+import { loadCarModels, dressCar, randomCarKind } from './cars.js';
 import { createFocus, REWARDS, FOCUS_SEGMENTS } from './focus.js';
 import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
@@ -934,16 +935,26 @@ export default function SkylineSwingerMobile() {
       cars.push(car);
     }
     addParkedCar(3.5, -8, Math.PI / 2, 0xd23c3c);
+    cars[cars.length - 1].userData.kindWanted = 'sports';
     for (let i = 0, made = 0; i < 400 && made < 18; i++) {
       const x = (Math.random() - 0.5) * CITY_SIZE * 1.7, z = (Math.random() - 0.5) * CITY_SIZE * 1.7;
       if (streetBlocked(x, z, 3.2) || cars.some(c => Math.hypot(c.position.x - x, c.position.z - z) < 8)) continue;
       addParkedCar(x, z, Math.floor(Math.random() * 4) * Math.PI / 2, carColors[Math.floor(Math.random() * carColors.length)]);
       made++;
     }
+    // swap the box cars for real models once they've loaded
+    loadCarModels(() => {
+      for (const car of cars) dressCar(THREE, car, car.userData.kindWanted || randomCarKind());
+    });
+    let sirenT = 0;
     const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
     function updateCars(dt) {
+      sirenT += dt;
+      const flash = Math.floor(sirenT * 5) % 2;
       for (const car of cars) {
         const d = car.userData, p = car.position;
+        if (d.siren) { d.siren[0].visible = flash === 0; d.siren[1].visible = flash === 1; }
+        if (!d.player && d.wheels) for (const w of d.wheels) w.rotation.x += (d.parked ? 0 : d.speed) * dt / 0.6;
         if (d.player || d.parked) continue; // the hero is driving it / left it parked
         const look = 5 + d.speed * 0.4;
         const clear = (a) => !streetBlocked(p.x + Math.sin(a) * look, p.z + Math.cos(a) * look, 1.6)
@@ -3077,7 +3088,7 @@ export default function SkylineSwingerMobile() {
       else if (throttle < -0.05) d.speed += throttle * (d.speed > 0 ? 30 : 9) * dt;
       else d.speed *= Math.max(0, 1 - 0.8 * dt);
       if (handbrake) d.speed *= Math.max(0, 1 - 2.2 * dt);
-      d.speed = Math.max(-9, Math.min(32, d.speed));
+      d.speed = Math.max(-9, Math.min(d.top || 32, d.speed));
       const grip = Math.max(-1, Math.min(1, d.speed / 6));
       d.heading -= steer * (handbrake ? 2.6 : 1.7) * grip * dt;
       const nx = car.position.x + Math.sin(d.heading) * d.speed * dt;
@@ -3101,10 +3112,11 @@ export default function SkylineSwingerMobile() {
       // body leans in turns, wheels spin, front wheels steer
       car.rotation.z = -steer * grip * 0.06;
       const wheels = car.userData.wheels || [];
-      wheels.forEach((w, i) => {
-        w.rotation.x += d.speed * dt / 0.38;
-        w.rotation.y = i < 2 ? -steer * 0.45 : 0;
-      });
+      const fronts = car.userData.frontWheels || wheels.slice(0, 2);
+      for (const w of wheels) {
+        w.rotation.x += d.speed * dt / (car.userData.frontWheels ? 0.6 : 0.38);
+        w.rotation.y = fronts.includes(w) ? -steer * 0.45 : 0;
+      }
       // people jump out of the way
       if (Math.abs(d.speed) > 3) {
         for (const p of pedestrians) {
