@@ -11,6 +11,38 @@ import { createStory, MISSIONS, normalizeProgress } from './story.js';
 import { createFocus, REWARDS, FOCUS_SEGMENTS } from './focus.js';
 import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
+// Age-rating badges (Max's request). Our own designs, styled like European / American game ratings;
+// NOT the official PEGI/ESRB logos (the game isn't officially rated).
+const RATING_REASONS = 'Mild violence · Toilet humour';
+function RatingBadges({ size = 1, reasons = true, style }) {
+  const s = (n) => Math.round(n * size);
+  return (
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: s(6), pointerEvents: 'none', userSelect: 'none', ...style }}>
+      <div style={{ display: 'flex', gap: s(10), alignItems: 'stretch' }}>
+        <div style={{
+          width: s(56), height: s(68), borderRadius: s(6), background: '#f59e0b', border: `${s(3)}px solid #fff`,
+          boxShadow: '0 2px 6px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', color: '#fff', fontFamily: 'Arial, Helvetica, sans-serif', lineHeight: 1
+        }}>
+          <div style={{ fontSize: s(34), fontWeight: 900 }}>12</div>
+          <div style={{ fontSize: s(9), fontWeight: 'bold', letterSpacing: s(1), marginTop: s(4) }}>AGE</div>
+        </div>
+        <div style={{
+          width: s(50), height: s(68), borderRadius: s(3), background: '#fff', border: `${s(3)}px solid #111`,
+          boxShadow: '0 2px 6px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          color: '#111', fontFamily: 'Arial, Helvetica, sans-serif', lineHeight: 1
+        }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: s(38), fontWeight: 900 }}>T</div>
+          <div style={{ background: '#111', color: '#fff', fontSize: s(10), fontWeight: 'bold', textAlign: 'center', padding: `${s(3)}px 0`, letterSpacing: s(1) }}>TEEN</div>
+        </div>
+      </div>
+      {reasons && (
+        <div style={{ fontSize: s(11), color: '#fff', opacity: 0.85, fontWeight: 'bold', textShadow: '0 1px 2px #000' }}>{RATING_REASONS}</div>
+      )}
+    </div>
+  );
+}
+
 export default function SkylineSwingerMobile() {
   const mountRef = useRef(null);
   const containerRef = useRef(null);
@@ -3727,6 +3759,9 @@ export default function SkylineSwingerMobile() {
                   </div>
                 );
               })}
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
+                <RatingBadges size={0.7} />
+              </div>
             </div>
           )}
 
@@ -3859,6 +3894,10 @@ export default function SkylineSwingerMobile() {
             </div>
           )}
 
+          {!storyUi.cut && (
+            <RatingBadges size={0.36} reasons={false} style={{ position: 'absolute', left: 6, bottom: 4, opacity: 0.8, zIndex: 2 }} />
+          )}
+
           {message && (
             <div style={{
               position: 'absolute', top: '40%', left: '50%', transform: 'translate(-50%,-50%)',
@@ -3891,6 +3930,7 @@ export default function SkylineSwingerMobile() {
           >
             Start Swinging
           </button>
+          <RatingBadges size={1} style={{ marginTop: 22 }} />
         </div>
       )}
     </div>
