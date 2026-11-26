@@ -50,6 +50,8 @@ export default function SkylineSwingerMobile() {
   const webBtnRef = useRef(null);
   const jumpBtnRef = useRef(null);
   const zipRef = useRef(null);
+  const carRef = useRef(null); // { toggle() } get in / out of a car
+  const [carUi, setCarUi] = useState(null); // 'near' | 'drive' | null
   const zoomRef = useRef(null); // { by(f), scope() } from the game loop
   const [scopeZoom, setScopeZoom] = useState(0); // 0 = binoculars off, else the magnification shown
   const fightBtnRef = useRef(null);
@@ -883,6 +885,25 @@ export default function SkylineSwingerMobile() {
       );
       cabin.position.set(0, 1.05, -0.2);
       grp.add(cabin);
+      // wheels (spin while the hero drives) + head/tail lights
+      const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.3, 12);
+      wheelGeo.rotateZ(Math.PI / 2);
+      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+      const wheels = [];
+      for (const [wx, wz] of [[-1.05, 1.35], [1.05, 1.35], [-1.05, -1.35], [1.05, -1.35]]) {
+        const w = new THREE.Mesh(wheelGeo, wheelMat);
+        w.position.set(wx, 0.38, wz);
+        grp.add(w);
+        wheels.push(w);
+      }
+      const lightGeo = new THREE.BoxGeometry(0.4, 0.18, 0.05);
+      for (const sx of [-0.7, 0.7]) {
+        const head = new THREE.Mesh(lightGeo, new THREE.MeshBasicMaterial({ color: 0xfff6d0 }));
+        head.position.set(sx, 0.62, 2.11); grp.add(head);
+        const tail = new THREE.Mesh(lightGeo, new THREE.MeshBasicMaterial({ color: 0xc81e1e }));
+        tail.position.set(sx, 0.62, -2.11); grp.add(tail);
+      }
+      grp.userData.wheels = wheels;
       return grp;
     }
     const cars = [];
@@ -896,7 +917,7 @@ export default function SkylineSwingerMobile() {
         if (!streetBlocked(x, z, 3)) break;
       }
       const heading = Math.floor(Math.random() * 4) * Math.PI / 2;
-      car.userData = { heading, cruise: 9 + Math.random() * 5, speed: 0 };
+      car.userData = { ...car.userData, heading, cruise: 9 + Math.random() * 5, speed: 0 };
       car.position.set(x, 0.02, z);
       car.rotation.y = heading;
       scene.add(car);
@@ -906,6 +927,7 @@ export default function SkylineSwingerMobile() {
     function updateCars(dt) {
       for (const car of cars) {
         const d = car.userData, p = car.position;
+        if (d.player || d.parked) continue; // the hero is driving it / left it parked
         const look = 5 + d.speed * 0.4;
         const clear = (a) => !streetBlocked(p.x + Math.sin(a) * look, p.z + Math.cos(a) * look, 1.6)
           && !streetBlocked(p.x + Math.sin(a) * look * 0.5, p.z + Math.cos(a) * look * 0.5, 1.6);
@@ -1878,7 +1900,7 @@ export default function SkylineSwingerMobile() {
     // Focus only charges while the hero is standing on something solid.
     const focus = createFocus(THREE, {
       hero, scene, audioCtx, spawnBurst, showMsg,
-      canFocus: () => onGround && !isSwinging && !zip && !wallRun && !scope && !story.inCutscene,
+      canFocus: () => !driving && onGround && !isSwinging && !zip && !wallRun && !scope && !story.inCutscene,
       onHud: (hud) => setFocusHud(hud),
     });
     focusRef.current = focus;
@@ -2020,7 +2042,7 @@ export default function SkylineSwingerMobile() {
       return null;
     }
     function startZip() {
-      if (insideBuilding || zip || story.inCutscene) return;
+      if (insideBuilding || zip || story.inCutscene || driving) return;
       setScope(false);
       const target = findZipTarget();
       if (!target) { showMsg('Nothing to zip to — look at a building!', 1200); return; }
@@ -2362,7 +2384,7 @@ export default function SkylineSwingerMobile() {
         camera.updateProjectionMatrix();
         return;
       }
-      const camDist = debugCamDist || (insideBuilding ? 5 : isSwinging ? 8.5 : 5.5) * (insideBuilding ? Math.min(1, zoomLevel) : zoomLevel);
+      const camDist = debugCamDist || (insideBuilding ? 5 : driving ? 9.5 : isSwinging ? 8.5 : 5.5) * (insideBuilding ? Math.min(1, zoomLevel) : zoomLevel);
       const offset = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch) + 0.35,
@@ -2485,6 +2507,7 @@ export default function SkylineSwingerMobile() {
         return;
       }
       if (playerHealth <= 0) {
+        if (driving) getOutOfCar();
         showMsg('Down! Recovering...');
         zip = null;
         if (wallRun) endWallRun();
@@ -2807,7 +2830,7 @@ export default function SkylineSwingerMobile() {
       hero.add(senseGroup);
     }
     function doDodge() {
-      if (dodgeCooldown > 0 || insideBuilding) return;
+      if (dodgeCooldown > 0 || insideBuilding || driving) return;
       const side = joystick.active ? joystick.x : keyAxis().x || (Math.random() < 0.5 ? -1 : 1);
       let dir = bosses.dodgeDir(side) || story.dodgeDir(side);
       if (!dir) {
@@ -2892,6 +2915,204 @@ export default function SkylineSwingerMobile() {
       }
     }
 
+    // ---------- Driving (Max: "like San Andreas") ----------
+    // Walk up to any traffic car → CAR button / G → the hero pulls the driver out
+    // (they tumble out, get up and run off shouting — nobody gets hurt) and drives.
+    // Joystick / WASD: up = gas, down = brake then reverse, left/right = steer.
+    // JUMP = handbrake, FIGHT = horn, CAR / G again = get out (car stays parked).
+    let driving = null; // { car, phase: 'pull' | 'drive', t, engine }
+    let carUiLast = null;
+    const fleeingDrivers = [];
+    function nearestCar(maxDist) {
+      let best = null, bd = maxDist;
+      for (const car of cars) {
+        const dd = Math.hypot(car.position.x - hero.position.x, car.position.z - hero.position.z);
+        if (dd < bd && hero.position.y < 4) { bd = dd; best = car; }
+      }
+      return best;
+    }
+    function canUseCar() {
+      return !insideBuilding && !isSwinging && !zip && !wallRun && !story.inCutscene && !focus.focusing;
+    }
+    function startEngine() {
+      if (!audioCtx) return null;
+      const osc = audioCtx.createOscillator();
+      const filter = audioCtx.createBiquadFilter();
+      const g = audioCtx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.value = 45;
+      filter.type = 'lowpass';
+      filter.frequency.value = 420;
+      g.gain.value = 0.035;
+      osc.connect(filter).connect(g).connect(audioCtx.destination);
+      osc.start();
+      return { osc, g };
+    }
+    function sfxHorn() {
+      playTone({ freq: 392, duration: 0.35, type: 'square', gain: 0.07 });
+      playTone({ freq: 494, duration: 0.35, type: 'square', gain: 0.07 });
+    }
+    function sfxCrash(power) {
+      playNoise({ duration: 0.35, gain: Math.min(0.4, 0.12 + power * 0.01), filterFreq: 1200 });
+      playTone({ freq: 140, freqEnd: 60, duration: 0.25, type: 'square', gain: 0.12 });
+    }
+    function getInCar() {
+      if (driving || !canUseCar()) return;
+      const car = nearestCar(5);
+      if (!car) return;
+      setScope(false);
+      const d = car.userData;
+      d.player = true;
+      const hadDriver = !d.parked;
+      d.parked = false;
+      d.speed = 0;
+      // driver's door = the car's left side
+      const h = d.heading;
+      const door = new THREE.Vector3(car.position.x + Math.cos(h) * 1.7, 1.5, car.position.z - Math.sin(h) * 1.7);
+      hero.position.copy(door);
+      heroVelocity.set(0, 0, 0);
+      if (hadDriver) {
+        const ped = makePedestrian();
+        ped.grp.position.set(car.position.x + Math.cos(h) * 1.2, 0, car.position.z - Math.sin(h) * 1.2);
+        ped.grp.rotation.y = h + Math.PI / 2;
+        scene.add(ped.grp);
+        const away = new THREE.Vector3(Math.cos(h), 0, -Math.sin(h));
+        fleeingDrivers.push({ ...ped, spec: randomCivilian(), t: 0, away, speed: 5 });
+        const shouts = ['"Hey! My car!"', '"Not again!"', '"I just washed that!"', '"Bring it back!"', '"Help! A superhero stole my car!"'];
+        showMsg(shouts[Math.floor(Math.random() * shouts.length)], 1800);
+      }
+      driving = { car, phase: 'pull', t: hadDriver ? 0.7 : 0.25, engine: null };
+      realHero.oneShot('Punch_Cross', 0.4);
+    }
+    function getOutOfCar() {
+      if (!driving) return;
+      const { car, engine } = driving;
+      const d = car.userData;
+      d.player = false;
+      d.parked = true;
+      d.speed = 0;
+      if (engine) {
+        engine.g.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
+        engine.osc.stop(audioCtx.currentTime + 0.3);
+      }
+      const h = d.heading;
+      let x = car.position.x + Math.cos(h) * 2.2, z = car.position.z - Math.sin(h) * 2.2;
+      if (streetBlocked(x, z, 0.5)) { x = car.position.x - Math.cos(h) * 2.2; z = car.position.z + Math.sin(h) * 2.2; }
+      hero.position.set(x, 1.5, z);
+      heroVelocity.set(0, 0, 0);
+      hero.visible = true;
+      driving = null;
+      doorCooldown = Math.max(doorCooldown, 1);
+    }
+    function toggleCar() { if (driving) getOutOfCar(); else getInCar(); }
+    function updateFleeingDrivers(dt, t) {
+      for (let i = fleeingDrivers.length - 1; i >= 0; i--) {
+        const p = fleeingDrivers[i];
+        p.t += dt;
+        if (p.t < 0.6) {
+          // tumble out onto the road, then get back up
+          p.grp.position.addScaledVector(p.away, 3 * dt);
+          p.grp.rotation.z = Math.sin((p.t / 0.6) * Math.PI) * 1.1;
+        } else {
+          p.grp.rotation.z = 0;
+          p.grp.position.addScaledVector(p.away, p.speed * dt);
+          if (pushOutOfBuildings(p.grp.position, 0.35, 0)) p.away.set(-p.away.z, 0, p.away.x);
+          p.grp.lookAt(p.grp.position.x + p.away.x, 0, p.grp.position.z + p.away.z);
+          const swing = Math.sin(t * 14) * 0.8;
+          p.hipL.rotation.x = swing; p.hipR.rotation.x = -swing;
+          p.shoulderL.rotation.x = -1.4 - swing * 0.3; p.shoulderR.rotation.x = -1.4 + swing * 0.3; // arms waving
+        }
+        realLOD(p, dt, !insideBuilding, p.t < 0.6 ? 'Idle_Loop' : 'Sprint_Loop', 1);
+        if (p.t > 7) { scene.remove(p.grp); fleeingDrivers.splice(i, 1); }
+      }
+    }
+    function updateDriving(dt, t) {
+      const { car } = driving;
+      const d = car.userData;
+      if (driving.phase === 'pull') {
+        driving.t -= dt;
+        hero.lookAt(car.position.x, hero.position.y, car.position.z);
+        if (driving.t <= 0) {
+          driving.phase = 'drive';
+          hero.visible = false;
+          driving.engine = startEngine();
+          playTone({ freq: 90, freqEnd: 160, duration: 0.5, type: 'sawtooth', gain: 0.08 });
+        }
+        return;
+      }
+      const kb = keyAxis();
+      const jx = joystick.active ? joystick.x : kb.x;
+      const jy = joystick.active ? joystick.y : kb.y;
+      const smoothing = 1 - Math.pow(0.001, dt);
+      smoothedJoy.x += (jx - smoothedJoy.x) * smoothing;
+      smoothedJoy.y += (jy - smoothedJoy.y) * smoothing;
+      const throttle = -smoothedJoy.y, steer = smoothedJoy.x;
+      const handbrake = jumpPressed;
+      if (throttle > 0.05) d.speed += throttle * (d.speed < 0 ? 30 : 13) * dt;
+      else if (throttle < -0.05) d.speed += throttle * (d.speed > 0 ? 30 : 9) * dt;
+      else d.speed *= Math.max(0, 1 - 0.8 * dt);
+      if (handbrake) d.speed *= Math.max(0, 1 - 2.2 * dt);
+      d.speed = Math.max(-9, Math.min(32, d.speed));
+      const grip = Math.max(-1, Math.min(1, d.speed / 6));
+      d.heading -= steer * (handbrake ? 2.6 : 1.7) * grip * dt;
+      const nx = car.position.x + Math.sin(d.heading) * d.speed * dt;
+      const nz = car.position.z + Math.cos(d.heading) * d.speed * dt;
+      let crashed = streetBlocked(nx, nz, 1.3) && !streetBlocked(car.position.x, car.position.z, 1.3);
+      if (!crashed) {
+        for (const other of cars) {
+          if (other === car) continue;
+          if (Math.hypot(other.position.x - nx, other.position.z - nz) < 3.4
+            && Math.hypot(other.position.x - car.position.x, other.position.z - car.position.z) >= 3.4) { crashed = true; break; }
+        }
+      }
+      if (crashed) {
+        const power = Math.abs(d.speed);
+        if (power > 6) { sfxCrash(power); triggerShake(Math.min(0.8, power * 0.03), 0.3); }
+        d.speed = -d.speed * 0.25;
+      } else {
+        car.position.x = nx; car.position.z = nz;
+      }
+      car.rotation.y = d.heading;
+      // body leans in turns, wheels spin, front wheels steer
+      car.rotation.z = -steer * grip * 0.06;
+      const wheels = car.userData.wheels || [];
+      wheels.forEach((w, i) => {
+        w.rotation.x += d.speed * dt / 0.38;
+        w.rotation.y = i < 2 ? -steer * 0.45 : 0;
+      });
+      // people jump out of the way
+      if (Math.abs(d.speed) > 3) {
+        for (const p of pedestrians) {
+          const dx = p.grp.position.x - car.position.x, dz = p.grp.position.z - car.position.z;
+          const dd = Math.hypot(dx, dz);
+          if (dd < 2.6) {
+            const sx = Math.cos(d.heading), sz = -Math.sin(d.heading);
+            const side = dx * sx + dz * sz >= 0 ? 1 : -1;
+            p.grp.position.x += sx * side * 3; p.grp.position.z += sz * side * 3;
+            pushOutOfBuildings(p.grp.position, 0.35, 0);
+            p.wanderTimer = 0;
+          }
+        }
+      }
+      hero.position.set(car.position.x, 1.5, car.position.z);
+      heroVelocity.set(Math.sin(d.heading) * d.speed, 0, Math.cos(d.heading) * d.speed);
+      onGround = true;
+      if (driving.engine) {
+        const rev = Math.abs(d.speed);
+        driving.engine.osc.frequency.setTargetAtTime(40 + rev * 4.5 + Math.abs(throttle) * 12, audioCtx.currentTime, 0.08);
+      }
+      // camera swings round behind the car
+      if (Math.abs(d.speed) > 1.5 && !mouseLook.active) {
+        const behind = d.heading + (d.speed < -1 ? 0 : Math.PI);
+        yaw += angDiff(behind, yaw) * Math.min(1, dt * 2.5);
+      }
+    }
+    function updateCarUi() {
+      const ui = driving ? 'drive' : (canUseCar() && nearestCar(5)) ? 'near' : null;
+      if (ui !== carUiLast) { carUiLast = ui; setCarUi(ui); }
+    }
+    carRef.current = { toggle: toggleCar };
+
     function animate() {
       animationId = requestAnimationFrame(animate);
       try {
@@ -2909,6 +3130,7 @@ export default function SkylineSwingerMobile() {
       story.update(dt, t);
       if (story.inCutscene) {
         // movie scene: the story drives the camera; the hero and enemies wait
+        if (driving) getOutOfCar();
         focus.interrupt();
         if (focusRingRef.current) focusRingRef.current.style.display = 'none';
         updateParticles(dt);
@@ -2923,7 +3145,8 @@ export default function SkylineSwingerMobile() {
       updateDodge(dt, t);
       if (invincibleT > 0) invincibleT -= dt;
       if (attackCooldownT > 0) attackCooldownT -= dt;
-      if (webPressed && !isSwinging && !insideBuilding) startSwing();
+      if (webPressed && !isSwinging && !insideBuilding && !driving) startSwing();
+      if (fightRequested && driving) { fightRequested = false; sfxHorn(); }
       if (fightRequested) {
         fightRequested = false;
         if (attackCooldownT <= 0) {
@@ -2934,10 +3157,12 @@ export default function SkylineSwingerMobile() {
           performAttack();
         }
       }
-      updateHero(dt, t);
+      if (driving) updateDriving(dt, t); else updateHero(dt, t);
       updateFocus(dt, t);
-      realHero.update(dt, { ...heroAnimState(), breath: focus.ring });
-      updateBuildingEntry(dt);
+      realHero.update(dt, driving ? { mode: 'idle', speed: 0, anchor: null } : { ...heroAnimState(), breath: focus.ring });
+      if (!driving) updateBuildingEntry(dt);
+      updateFleeingDrivers(dt, t);
+      updateCarUi();
       updateInterior(dt);
       updateEnemies(dt, t);
       bosses.update(dt, t);
@@ -3102,6 +3327,7 @@ export default function SkylineSwingerMobile() {
       if (k === 'q') doDodge();
       if (k === 'r') startZip();
       if (k === 'b') setScope(!scope);
+      if (k === 'g' || k === 'enter') toggleCar();
       if (k === 'c') focus.press(true);
       if (k === '1') focus.spend('swing');
       if (k === '2') focus.spend('shield');
@@ -3205,6 +3431,7 @@ export default function SkylineSwingerMobile() {
         camDist: (d) => { debugCamDist = d; },
         get zoomLevel() { return zoomLevel; },
         get scope() { return scope; },
+        get driving() { return driving; }, toggleCar: () => toggleCar(), fleeingDrivers,
         zoomBy: (f) => zoomBy(f),
         setScope: (on) => setScope(on),
         get swinging() { return isSwinging; },
@@ -3277,8 +3504,8 @@ export default function SkylineSwingerMobile() {
             padding: '6px 12px', borderRadius: 10, fontSize: 12, lineHeight: 1.4
           }}>
             {isTouch
-              ? <>Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Hold FOCUS to charge powers &nbsp; Walk into a glowing doorway to go inside</>
-              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; R: zip &nbsp; F: fight &nbsp; Q: dodge &nbsp; Hold C: focus &nbsp; 1 / 2 / 3: powers &nbsp; 💀 on the map = boss</>}
+              ? <>Left side: move &nbsp; Right side: look &nbsp; JUMP mid-swing: boost &nbsp; Walk up to a car and tap GET IN to drive &nbsp; Hold FOCUS to charge powers &nbsp; Walk into a glowing doorway to go inside</>
+              : <>WASD / arrows: move &nbsp; Drag mouse: look &nbsp; Space: jump &nbsp; Hold E: web &nbsp; R: zip &nbsp; F: fight &nbsp; Q: dodge &nbsp; G: get in/out of a car &nbsp; Hold C: focus &nbsp; 1 / 2 / 3: powers &nbsp; 💀 on the map = boss</>}
           </div>
           <div data-ui
             onPointerDown={mcPressStart} onPointerUp={mcPressEnd} onPointerCancel={mcPressEnd} onPointerLeave={mcPressEnd}
@@ -3461,6 +3688,24 @@ export default function SkylineSwingerMobile() {
               color: '#bdfbff', fontSize: 13, fontWeight: 'bold', letterSpacing: 3, textShadow: '0 0 8px rgba(94,242,255,0.9), 0 1px 2px #000'
             }}>CHARGE</div>
           </div>
+
+          {/* CAR button: get in (near a car) / get out */}
+          {carUi && (
+            <div data-ui
+              onPointerDown={(e) => { e.stopPropagation(); carRef.current && carRef.current.toggle(); }}
+              onContextMenu={(e) => e.preventDefault()}
+              style={{
+                position: 'absolute', right: 128, bottom: 190, width: 64, height: 64, borderRadius: '50%',
+                background: carUi === 'drive' ? 'rgba(239,68,68,0.55)' : 'rgba(34,197,94,0.6)',
+                border: '2px solid rgba(255,255,255,0.85)', color: '#fff', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 'bold', lineHeight: 1.1,
+                userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', cursor: 'pointer',
+                touchAction: 'none', textShadow: '0 1px 2px #000', zIndex: 5
+              }}>
+              <span style={{ fontSize: 22 }}>🚗</span>
+              {carUi === 'drive' ? 'GET OUT' : 'GET IN'}{isTouch ? '' : ' (G)'}
+            </div>
+          )}
 
           {/* FOCUS button (hold) */}
           <div ref={focusBtnRef} data-ui
