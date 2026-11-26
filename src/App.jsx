@@ -1856,8 +1856,33 @@ export default function SkylineSwingerMobile() {
     const particles = [];
     const particleGeo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
     // Mild cartoon blood (Bonnie OK'd 2026-11-26): a few small red drops that fall and fade. Hero + human villains only.
+    // 2026-11-26: Bonnie OK'd "a little more, nothing too gory": more/bigger drops + a few small
+    // drip marks on the ground that fade away after a few seconds (max 24 at once).
+    const dripGeo = new THREE.CircleGeometry(0.14, 10);
+    dripGeo.rotateX(-Math.PI / 2);
+    const drips = [];
     function bloodSplash(pos) {
-      spawnBurst(pos, 0xb3121b, 5, { speed: 4, life: 0.45, gravity: -20, size: 0.45 });
+      spawnBurst(pos, 0xb3121b, 9, { speed: 4.5, life: 0.6, gravity: -20, size: 0.55 });
+      const groundY = insideBuilding
+        ? interiorGroundBelow(insideBuilding, pos.x, pos.y, pos.z)
+        : getGroundHeightBelow(pos.x, pos.y, pos.z);
+      const n = 2 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < n; i++) {
+        if (drips.length >= 24) { const old = drips.shift(); scene.remove(old.mesh); old.mesh.material.dispose(); }
+        const mesh = new THREE.Mesh(dripGeo, new THREE.MeshBasicMaterial({ color: 0x8e0f16, transparent: true, opacity: 0.85, depthWrite: false }));
+        mesh.position.set(pos.x + (Math.random() - 0.5) * 1.2, groundY + 0.03, pos.z + (Math.random() - 0.5) * 1.2);
+        mesh.scale.setScalar(0.6 + Math.random() * 0.8);
+        scene.add(mesh);
+        drips.push({ mesh, t: 0 });
+      }
+    }
+    function updateDrips(dt) {
+      for (let i = drips.length - 1; i >= 0; i--) {
+        const d = drips[i];
+        d.t += dt;
+        if (d.t > 2.5) d.mesh.material.opacity = Math.max(0, 0.85 * (1 - (d.t - 2.5) / 1.5));
+        if (d.t > 4) { scene.remove(d.mesh); d.mesh.material.dispose(); drips.splice(i, 1); }
+      }
     }
     function spawnBurst(pos, color, count = 10, opts = {}) {
       const { speed = 6, life = 0.5, gravity = -18, size = 1 } = opts;
@@ -1873,6 +1898,7 @@ export default function SkylineSwingerMobile() {
       }
     }
     function updateParticles(dt) {
+      updateDrips(dt);
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         p.vel.y += p.gravity * dt;
