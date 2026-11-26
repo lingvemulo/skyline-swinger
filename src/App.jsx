@@ -907,8 +907,8 @@ export default function SkylineSwingerMobile() {
       return grp;
     }
     const cars = [];
-    const carColors = [0xd23c3c, 0x3c6fd2, 0xd2c23c, 0xe8e8e8, 0x3c3c3c];
-    for (let i = 0; i < 8; i++) {
+    const carColors = [0xd23c3c, 0x3c6fd2, 0xd2c23c, 0xe8e8e8, 0x3c3c3c, 0x2f9e5b, 0xf08a24, 0x8b5cf6, 0x7a1f2b, 0x9fb4c8];
+    for (let i = 0; i < 24; i++) {
       const car = makeCar(carColors[i % carColors.length]);
       let x = 0, z = 0;
       for (let k = 0; k < 60; k++) {
@@ -922,6 +922,23 @@ export default function SkylineSwingerMobile() {
       car.rotation.y = heading;
       scene.add(car);
       cars.push(car);
+    }
+    // parked cars along the streets (empty: GET IN without pulling anyone out),
+    // plus one right next to where the hero starts
+    function addParkedCar(x, z, heading, color) {
+      const car = makeCar(color);
+      car.userData = { ...car.userData, heading, cruise: 9 + Math.random() * 5, speed: 0, parked: true };
+      car.position.set(x, 0.02, z);
+      car.rotation.y = heading;
+      scene.add(car);
+      cars.push(car);
+    }
+    addParkedCar(3.5, -8, Math.PI / 2, 0xd23c3c);
+    for (let i = 0, made = 0; i < 400 && made < 18; i++) {
+      const x = (Math.random() - 0.5) * CITY_SIZE * 1.7, z = (Math.random() - 0.5) * CITY_SIZE * 1.7;
+      if (streetBlocked(x, z, 3.2) || cars.some(c => Math.hypot(c.position.x - x, c.position.z - z) < 8)) continue;
+      addParkedCar(x, z, Math.floor(Math.random() * 4) * Math.PI / 2, carColors[Math.floor(Math.random() * carColors.length)]);
+      made++;
     }
     const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
     function updateCars(dt) {
@@ -2710,6 +2727,14 @@ export default function SkylineSwingerMobile() {
         const p = b.geometry.parameters;
         ctx.fillRect(dx - p.width / 2, dz - p.depth / 2, p.width, p.depth);
       }
+      // cars: yellow dots (so you can find one to drive)
+      ctx.fillStyle = '#ffd23f';
+      for (const c of cars) {
+        if (driving && c === driving.car) continue;
+        const dx = c.position.x - hx, dz = c.position.z - hz;
+        if (Math.abs(dx) > MAP_RANGE * 1.5 || Math.abs(dz) > MAP_RANGE * 1.5) continue;
+        ctx.beginPath(); ctx.arc(dx, dz, 3.5, 0, Math.PI * 2); ctx.fill();
+      }
       ctx.restore();
       // door dots drawn in screen space so they stay a constant size
       const cy = Math.cos(yaw), sy = Math.sin(yaw);
@@ -3530,7 +3555,7 @@ export default function SkylineSwingerMobile() {
               display: shortScreen ? 'none' : 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, rowGap: 1,
               fontSize: 9, color: '#fff'
             }}>
-              {[['Hotel', '#ffb347'], ['Apartments', '#7bd389'], ['Shop', '#ff6b9a'], ['Office', '#6bb7ff']].map(([n, c]) => (
+              {[['Hotel', '#ffb347'], ['Apartments', '#7bd389'], ['Shop', '#ff6b9a'], ['Office', '#6bb7ff'], ['Car', '#ffd23f']].map(([n, c]) => (
                 <span key={n}><span style={{ color: c }}>●</span> {n}</span>
               ))}
             </div>
