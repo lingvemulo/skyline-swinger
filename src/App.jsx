@@ -935,7 +935,7 @@ export default function SkylineSwingerMobile() {
       cars.push(car);
     }
     addParkedCar(3.5, -8, Math.PI / 2, 0xd23c3c);
-    cars[cars.length - 1].userData.kindWanted = 'sports';
+    cars[cars.length - 1].userData.kindWanted = 'supercar';
     for (let i = 0, made = 0; i < 400 && made < 18; i++) {
       const x = (Math.random() - 0.5) * CITY_SIZE * 1.7, z = (Math.random() - 0.5) * CITY_SIZE * 1.7;
       if (streetBlocked(x, z, 3.2) || cars.some(c => Math.hypot(c.position.x - x, c.position.z - z) < 8)) continue;
@@ -954,7 +954,7 @@ export default function SkylineSwingerMobile() {
       for (const car of cars) {
         const d = car.userData, p = car.position;
         if (d.siren) { d.siren[0].visible = flash === 0; d.siren[1].visible = flash === 1; }
-        if (!d.player && d.wheels) for (const w of d.wheels) w.rotation.x += (d.parked ? 0 : d.speed) * dt / 0.6;
+        if (!d.player && d.wheels) for (const w of d.wheels) w.rotation[d.axle || 'x'] += (d.parked ? 0 : d.speed) * dt / 0.6;
         if (d.player || d.parked) continue; // the hero is driving it / left it parked
         const look = 5 + d.speed * 0.4;
         const clear = (a) => !streetBlocked(p.x + Math.sin(a) * look, p.z + Math.cos(a) * look, 1.6)
@@ -3114,7 +3114,7 @@ export default function SkylineSwingerMobile() {
       const wheels = car.userData.wheels || [];
       const fronts = car.userData.frontWheels || wheels.slice(0, 2);
       for (const w of wheels) {
-        w.rotation.x += d.speed * dt / (car.userData.frontWheels ? 0.6 : 0.38);
+        w.rotation[d.axle || 'x'] += d.speed * dt / (car.userData.frontWheels ? 0.6 : 0.38);
         w.rotation.y = fronts.includes(w) ? -steer * 0.45 : 0;
       }
       // people jump out of the way
