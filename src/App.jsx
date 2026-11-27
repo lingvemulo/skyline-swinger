@@ -9,6 +9,7 @@ import { createBosses, ARENA } from './bosses.js';
 import { mountChat } from './chat/chat-ui.js';
 import { createStory, MISSIONS, normalizeProgress } from './story.js';
 import { loadCarModels, dressCar, randomCarKind } from './cars.js';
+import { createOutskirts } from './outskirts.js';
 import { createFocus, REWARDS, FOCUS_SEGMENTS } from './focus.js';
 import { BUILDING_TYPES, FLOOR_H, createInteriors, updateElevatorDoors, collideInterior, interiorGroundBelow } from './interiors.js';
 
@@ -271,7 +272,7 @@ export default function SkylineSwingerMobile() {
     // ---------- Scene ----------
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x8ec9e8);
-    scene.fog = new THREE.Fog(0xbfe0f2, 90, 340);
+    scene.fog = new THREE.Fog(0xbfe0f2, 110, 520);
 
     const camera = new THREE.PerspectiveCamera(72, mount.clientWidth / mount.clientHeight, 0.1, 1000);
     let renderer;
@@ -862,8 +863,13 @@ export default function SkylineSwingerMobile() {
       return pushed;
     }
     // is there a building at street level here (with a margin)?
-    function streetBlocked(x, z, m) {
-      if (Math.abs(x) > CITY_SIZE - 4 || Math.abs(z) > CITY_SIZE - 4) return true;
+    // Countryside + farms (north), beach + sea (south): see outskirts.js
+    const outskirts = createOutskirts(THREE, scene, { CITY_SIZE, addRoofBox, peopleReady, makeRealPerson, randomCivilian });
+    // player = the hero's car: may leave the city (traffic stays inside)
+    function streetBlocked(x, z, m, player = false) {
+      if (Math.abs(x) > CITY_SIZE - 4 || Math.abs(z) > CITY_SIZE - 4) {
+        if (!player || outskirts.carBlocked(x, z, m)) return true;
+      }
       for (const b of buildings) {
         const p = b.geometry.parameters;
         if (b.position.y - p.height / 2 > 1) continue; // raised things (helipad)
@@ -936,6 +942,11 @@ export default function SkylineSwingerMobile() {
     }
     addParkedCar(3.5, -8, Math.PI / 2, 0xd23c3c);
     cars[cars.length - 1].userData.kindWanted = 'supercar';
+    // parked out at the farms (tractors!) and the beach car park
+    for (const sp of outskirts.parkedSpots) {
+      addParkedCar(sp.x, sp.z, sp.heading, carColors[Math.floor(Math.random() * carColors.length)]);
+      if (sp.kind) cars[cars.length - 1].userData.kindWanted = sp.kind;
+    }
     for (let i = 0, made = 0; i < 400 && made < 18; i++) {
       const x = (Math.random() - 0.5) * CITY_SIZE * 1.7, z = (Math.random() - 0.5) * CITY_SIZE * 1.7;
       if (streetBlocked(x, z, 3.2) || cars.some(c => Math.hypot(c.position.x - x, c.position.z - z) < 8)) continue;
@@ -1876,6 +1887,17 @@ export default function SkylineSwingerMobile() {
         drips.push({ mesh, t: 0 });
       }
     }
+    // splashes when the hero wades in the sea
+    let splashT = 0;
+    function updateWaterSplash(dt) {
+      if (driving || insideBuilding || !outskirts.inWater(hero.position.x, hero.position.z) || hero.position.y > 2.2) return;
+      const sp = Math.hypot(heroVelocity.x, heroVelocity.z);
+      splashT -= dt;
+      if (sp > 1 && splashT <= 0) {
+        splashT = 0.18;
+        spawnBurst(new THREE.Vector3(hero.position.x, 0.4, hero.position.z), 0xe8f6ff, 4, { speed: 3, life: 0.4, gravity: -14, size: 0.5 });
+      }
+    }
     function updateDrips(dt) {
       for (let i = drips.length - 1; i >= 0; i--) {
         const d = drips[i];
@@ -2333,8 +2355,7 @@ export default function SkylineSwingerMobile() {
         }
       } else if (moveX !== 0 || moveZ !== 0) hero.rotation.y = Math.atan2(moveX, moveZ);
       if (!insideBuilding) {
-        hero.position.x = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.x));
-        hero.position.z = Math.max(-CITY_SIZE, Math.min(CITY_SIZE, hero.position.z));
+        outskirts.clampHero(hero.position);
       }
 
       // ---- procedural limb animation for a more lifelike, less static pose ----
@@ -2762,6 +2783,13 @@ export default function SkylineSwingerMobile() {
       ctx.scale(sc, sc);
       ctx.rotate(yaw);
       const hx = hero.position.x, hz = hero.position.z;
+      // outside the city: fields, roads, sand, sea
+      for (const sh of outskirts.mapShapes) {
+        const dx = sh.x - hx, dz = sh.z - hz;
+        if (Math.abs(dx) - sh.w / 2 > MAP_RANGE * 1.5 || Math.abs(dz) - sh.d / 2 > MAP_RANGE * 1.5) continue;
+        ctx.fillStyle = sh.color;
+        ctx.fillRect(dx - sh.w / 2, dz - sh.d / 2, sh.w, sh.d);
+      }
       ctx.fillStyle = '#7d8796';
       for (const b of buildings) {
         const dx = b.position.x - hx, dz = b.position.z - hz;
@@ -3064,7 +3092,7 @@ export default function SkylineSwingerMobile() {
       }
       const h = d.heading;
       let x = car.position.x + Math.cos(h) * 2.2, z = car.position.z - Math.sin(h) * 2.2;
-      if (streetBlocked(x, z, 0.5)) { x = car.position.x - Math.cos(h) * 2.2; z = car.position.z + Math.sin(h) * 2.2; }
+      if (streetBlocked(x, z, 0.5, true)) { x = car.position.x - Math.cos(h) * 2.2; z = car.position.z + Math.sin(h) * 2.2; }
       hero.position.set(x, 1.5, z);
       heroVelocity.set(0, 0, 0);
       hero.visible = true;
@@ -3124,7 +3152,7 @@ export default function SkylineSwingerMobile() {
       d.heading -= steer * (handbrake ? 2.6 : 1.7) * grip * dt;
       const nx = car.position.x + Math.sin(d.heading) * d.speed * dt;
       const nz = car.position.z + Math.cos(d.heading) * d.speed * dt;
-      let crashed = streetBlocked(nx, nz, 1.3) && !streetBlocked(car.position.x, car.position.z, 1.3);
+      let crashed = streetBlocked(nx, nz, 1.3, true) && !streetBlocked(car.position.x, car.position.z, 1.3, true);
       if (!crashed) {
         for (const other of cars) {
           if (other === car) continue;
@@ -3181,6 +3209,11 @@ export default function SkylineSwingerMobile() {
     }
     carRef.current = { toggle: toggleCar };
 
+    // the sky dome + sun glow travel with the camera (the world is bigger than the dome now)
+    function followSky() {
+      sky.position.set(camera.position.x, 0, camera.position.z);
+      sunGlow.position.set(camera.position.x + 200, 160, camera.position.z - 300);
+    }
     function animate() {
       animationId = requestAnimationFrame(animate);
       try {
@@ -3206,6 +3239,7 @@ export default function SkylineSwingerMobile() {
         updateCars(dt);
         updatePedestrians(dt, t);
         realHero.update(dt, { mode: 'idle', speed: 0, anchor: null });
+        followSky();
         if (!simDt) renderer.render(scene, camera);
         return;
       }
@@ -3241,7 +3275,14 @@ export default function SkylineSwingerMobile() {
       updateClouds(dt);
       updateCars(dt);
       updatePedestrians(dt, t);
+      outskirts.update(dt, t, hero.position);
+      updateWaterSplash(dt);
+      // the sun (and its shadow box) follows the hero so shadows work out of town too
+      sun.position.set(hero.position.x + 80, 140, hero.position.z + 60);
+      sun.target.position.set(hero.position.x, 0, hero.position.z);
+      sun.target.updateMatrixWorld();
       updateCamera(dt, t);
+      followSky();
       updateWebLine();
       updateOrbs(dt, t);
       updateHeroShadow();
@@ -3499,7 +3540,7 @@ export default function SkylineSwingerMobile() {
         camDist: (d) => { debugCamDist = d; },
         get zoomLevel() { return zoomLevel; },
         get scope() { return scope; },
-        get driving() { return driving; }, toggleCar: () => toggleCar(), fleeingDrivers,
+        get driving() { return driving; }, toggleCar: () => toggleCar(), fleeingDrivers, outskirts,
         zoomBy: (f) => zoomBy(f),
         setScope: (on) => setScope(on),
         get swinging() { return isSwinging; },

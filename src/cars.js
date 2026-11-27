@@ -16,6 +16,7 @@ export const CAR_KINDS = {
   delivery:   { file: 'delivery',         top: 24, weight: 2 },
   taxi:       { file: 'taxi',             top: 31, weight: 3 },
   police:     { file: 'police',           top: 38, weight: 2 },
+  tractor:    { file: 'tractor',          top: 14, weight: 0 }, // farms only, never in city traffic
   // Max & Bonnie's AI-made car (Tripo, 2026-11-26): realistic sports car, simplified
   // from 4.9M to ~39k triangles with the wheels cut out as separate pieces.
   // Model is 0.98 long along x with the nose at -x (so the wheels at -x steer), axles along z.
@@ -56,7 +57,7 @@ export function loadCarModels(onDone) {
 }
 
 export function randomCarKind() {
-  const kinds = Object.keys(CAR_KINDS).filter(k => models[k] || !ready);
+  const kinds = Object.keys(CAR_KINDS).filter(k => CAR_KINDS[k].weight > 0 && (models[k] || !ready));
   const total = kinds.reduce((s, k) => s + CAR_KINDS[k].weight, 0);
   let r = Math.random() * total;
   for (const k of kinds) { r -= CAR_KINDS[k].weight; if (r <= 0) return k; }

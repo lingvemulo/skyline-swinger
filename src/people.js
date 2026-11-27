@@ -257,11 +257,11 @@ export function makeRealPerson(spec) {
       U.uMetal.value = o.metal ?? 0.1; U.uRough.value = o.rough ?? 0.45;
     } else {
       U.uMode.value = 2;
-      U.uTop.value.set(o.top || '#888888');
+      U.uTop.value.set(o.top && o.top !== 'skin' ? o.top : '#888888');
       U.uSleeveSkin.value = o.sleeve === 'skin' ? 1 : 0;
-      U.uSleeve.value.set(o.sleeve && o.sleeve !== 'skin' ? o.sleeve : (o.top || '#888888'));
+      U.uSleeve.value.set(o.sleeve && o.sleeve !== 'skin' ? o.sleeve : (o.top && o.top !== 'skin' ? o.top : '#888888'));
       U.uLegs.value.set(o.legs || '#2b3446');
-      U.uShoes.value.set(o.shoes || '#f2f2f2');
+      U.uShoes.value.set(o.shoes && o.shoes !== 'skin' ? o.shoes : '#f2f2f2');
       U.uShorts.value = o.pantsDown ? 2 : o.shorts ? 1 : 0;
       U.uTopSkin.value = o.top === 'skin' ? 1 : 0;
       U.uFeetSkin.value = o.shoes === 'skin' ? 1 : 0;
